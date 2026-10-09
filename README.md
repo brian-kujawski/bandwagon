@@ -37,6 +37,18 @@ npm run build
 - `src/lib/jambase.ts`: upcoming events by MusicBrainz ID, with the name-search fallback.
 - `src/lib/cobills.ts`: festival filter, scoring, and the "why" text. Pure functions, unit tested.
 - `src/lib/recommend.ts`: ties the two together and decides which empty state to show.
+- `src/lib/concertArchives.ts`: turns Concert Archives concert lists into co-bills (lineups from show titles, festival filter, de-duplication).
 - `src/app/`: the search page (`page.tsx`) and the results page (`artist/[mbid]/page.tsx`).
 
 Responses are cached in memory only (JamBase for a day, MusicBrainz for a week). Nothing is written to disk until JamBase's storage terms are checked.
+
+## Concert Archives history (experimental)
+
+`scripts/concert-archives.mts` pulls a band's past shows from Concert Archives through a parse.bot subscription to the marketplace "concertarchives.org API", then tallies who shared a bill. It is a personal, non-commercial experiment; Concert Archives' terms restrict reuse without permission, so its output stays local.
+
+```bash
+PARSE_API_KEY=pmx_... PARSE_SCRAPER_ID=<your scraper id> \
+  node scripts/concert-archives.mts pup--5 --name PUP --max-pages 3 --budget 10
+```
+
+The slug is the one in the band's Concert Archives URL. Each page of about 50 rows costs 2 credits; show titles carry the lineup, so the script never pays for per-concert detail calls. Responses are cached in `data/concert-archives/` (git-ignored) and never re-fetched, and the script stops before going over `--budget` credits.
