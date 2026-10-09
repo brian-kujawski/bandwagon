@@ -12,7 +12,7 @@ When a band has nothing announced, or its shows list no other acts yet, the resu
 
 ## Running it
 
-Needs Node 20.9 or newer.
+Needs Node 20.9 or newer (`.nvmrc` pins 22, so `nvm use` picks it up).
 
 ```bash
 npm install
