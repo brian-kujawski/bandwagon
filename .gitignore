@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local env (keep .env.example)
 !.env.example
+
+# local scrape output (scripts/concert-archives.mts)
+/data/
