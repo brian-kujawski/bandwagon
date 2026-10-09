@@ -219,3 +219,52 @@ a.card:hover {
   list-style: none;
   margin-bottom: 1rem;
 }
+
+.prefs {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.prefs button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.prefs button:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+.prefs button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip form {
+  display: inline;
+}
+
+button.chip-remove {
+  font: inherit;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+details.saved {
+  margin-bottom: 1rem;
+}
+
+details.saved summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}

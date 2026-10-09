@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
+import { PrefButtons } from "../pref-buttons";
+import { getDb } from "@/lib/db";
 import { describeBridge, describeDirect, type GraphCandidate, type LinkShow } from "@/lib/graph";
-import { getArtist, type ArtistCandidate } from "@/lib/musicbrainz";
-import { idsFrom } from "@/lib/picks";
-import { recommendForMany, type SeedReport } from "@/lib/recommend";
+import { recommendForProfile, type ProfileOutcome } from "@/lib/recommend";
 
 const MAX_SHOWS_LISTED = 3;
 const MAX_BRIDGES_LISTED = 2;
@@ -20,30 +21,18 @@ function ShowLine({ show }: { show: LinkShow }) {
   return <li>{show.url ? <a href={show.url}>{text}</a> : text}</li>;
 }
 
-function listNames(names: string[]): string {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
-}
-
-function seedNote(r: SeedReport): string | null {
-  const name = r.artist.name;
-  switch (r.status.kind) {
-    case "not-on-jambase":
-      return r.storedShows
-        ? `${name} isn't on JamBase; using ${r.storedShows} stored co-billed dates.`
-        : `${name} isn't listed on JamBase, so we can't see their shows.`;
-    case "unavailable":
-      return r.status.reason === "no-key"
-        ? null // said once for the whole page
-        : `JamBase didn't answer for ${name}; using stored shows only.`;
-    default:
-      return r.storedShows === 0
-        ? `${name} has no shared bills announced yet. Openers are often added closer to the date.`
-        : null;
-  }
+function refreshNotes(o: ProfileOutcome): string[] {
+  return o.refreshed.flatMap(({ name, status }) =>
+    status.kind === "not-on-jambase"
+      ? [`${name} isn't listed on JamBase, so only stored shows are used for them.`]
+      : status.kind === "error"
+        ? [`JamBase didn't answer for ${name}; using stored shows only.`]
+        : [],
+  );
 }
 
 function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
+  const band = { name: c.artist.name, mbid: c.artist.mbid, jambaseId: c.artist.jambase_id, caSlug: c.artist.ca_slug };
   const name = c.artist.url ? <a href={c.artist.url}>{c.artist.name}</a> : c.artist.name;
   const shows = c.direct.flatMap((d) => d.shows);
   return (
@@ -71,28 +60,24 @@ function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
       {c.direct.length === 0 && c.bridges.length > MAX_BRIDGES_LISTED && (
         <p className="meta">and {c.bridges.length - MAX_BRIDGES_LISTED} more links like these</p>
       )}
+      <PrefButtons band={band} current={null} />
     </li>
   );
 }
 
-export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
-  const ids = idsFrom((await searchParams).id);
-  if (ids.length === 0) redirect("/");
-
-  const found = await Promise.all(ids.map((id) => getArtist(id)));
-  const artists = found.filter((a): a is ArtistCandidate => a !== null);
-  if (artists.length === 0) redirect("/");
-
-  const { seeds, graph, today } = await recommendForMany(artists);
-  const noKey = seeds.some((s) => s.status.kind === "unavailable" && s.status.reason === "no-key");
-  const notes = seeds.map(seedNote).filter((n): n is string => n !== null);
-  const names = listNames(artists.map((a) => a.name));
+export default async function BandsPage() {
+  await connection(); // reads the database on every request, never at build time
+  const outcome = await recommendForProfile(getDb());
+  if (outcome.liked === 0) redirect("/");
+  const { graph, today, noKey, budget } = outcome;
+  const notes = refreshNotes(outcome);
+  const names = outcome.liked === 1 ? "the band you like" : `the ${outcome.liked} bands you like`;
 
   return (
     <>
-      <h1>If you like {names}</h1>
+      <h1>Bands like {names}</h1>
       <p className="lede">
-        <Link href={`/?${new URLSearchParams(ids.map((id) => ["id", id]))}`}>Add or remove bands</Link>
+        <Link href="/">Add or remove bands</Link>
       </p>
 
       {noKey && (
@@ -124,7 +109,7 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
 
       {graph.direct.length > 0 && (
         <>
-          <h2 className="section-title">Sharing bills with {artists.length > 1 ? "your bands" : names}</h2>
+          <h2 className="section-title">Sharing bills with your bands</h2>
           <ol className="list">
             {graph.direct.map((c) => (
               <Candidate key={c.artist.id} c={c} today={today} />
@@ -153,6 +138,11 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
           out.
         </p>
       )}
+      <p className="meta" style={{ marginTop: "0.5rem" }}>
+        {outcome.waiting > 0 &&
+          `${outcome.waiting} of your bands are due a JamBase check; a few get one each visit. `}
+        JamBase calls this month: {budget.used} of {budget.limit}.
+      </p>
     </>
   );
 }

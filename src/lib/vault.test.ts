@@ -140,12 +140,12 @@ describe("export and import", () => {
     store(linux, 1, PAGE_1); // fetched on both
 
     const file = path.join(dir, "bandwagon-export.sqlite");
-    expect(exportData(windows, file)).toEqual({ payloads: 1 });
-    expect(importData(linux, file)).toEqual({ payloadsAdded: 0, payloadsInFile: 1 });
+    expect(exportData(windows, file)).toEqual({ payloads: 1, prefs: 0 });
+    expect(importData(linux, file)).toEqual({ payloadsAdded: 0, payloadsInFile: 1, prefsInFile: 0 });
 
     exportData(linux, file);
-    expect(importData(windows, file)).toEqual({ payloadsAdded: 1, payloadsInFile: 2 });
-    expect(importData(windows, file)).toEqual({ payloadsAdded: 0, payloadsInFile: 2 });
+    expect(importData(windows, file)).toMatchObject({ payloadsAdded: 1, payloadsInFile: 2 });
+    expect(importData(windows, file)).toMatchObject({ payloadsAdded: 0, payloadsInFile: 2 });
     expect(performerLedger(windows)[0]).toMatchObject({ pages: 2, reached_end: 1 });
     expect(coBilled(windows)).toContain("Pkew Pkew Pkew");
     windows.close();
@@ -156,7 +156,7 @@ describe("export and import", () => {
     const file = path.join(dir, "out.sqlite");
     exportData(db, file);
     store(db, 1, PAGE_1);
-    expect(exportData(db, file)).toEqual({ payloads: 1 });
+    expect(exportData(db, file)).toEqual({ payloads: 1, prefs: 0 });
     expect(importData(openDb(":memory:"), file).payloadsInFile).toBe(1);
   });
 

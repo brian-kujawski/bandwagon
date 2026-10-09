@@ -1,4 +1,4 @@
-import { TtlCache } from "./cache";
+import { TtlCache } from "./cache.ts";
 
 const BASE = "https://musicbrainz.org/ws/2";
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;

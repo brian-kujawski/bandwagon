@@ -1,4 +1,4 @@
-import { TtlCache } from "./cache";
+import { TtlCache } from "./cache.ts";
 
 const BASE = "https://api.data.jambase.com/v3";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,9 +64,13 @@ export class MissingJamBaseKeyError extends Error {
   }
 }
 
-async function jbFetch<T>(path: string, params: Record<string, string>): Promise<T> {
+/** Told about every call that goes out, so callers can count them against the monthly budget. */
+export type OnCall = () => void;
+
+async function jbFetch<T>(path: string, params: Record<string, string>, onCall?: OnCall): Promise<T> {
   const key = process.env.JAMBASE_API_KEY;
   if (!key) throw new MissingJamBaseKeyError();
+  onCall?.();
   const url = `${BASE}${path}?${new URLSearchParams(params)}`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
@@ -77,12 +81,13 @@ async function jbFetch<T>(path: string, params: Record<string, string>): Promise
   return (await res.json()) as T;
 }
 
-async function eventsFor(artistId: string): Promise<JbEvent[]> {
+async function eventsFor(artistId: string, onCall?: OnCall): Promise<JbEvent[]> {
   // perPage 100 covers every band in our test (the busiest had 25 upcoming).
-  const data = await jbFetch<{ events?: JbEvent[] }>("/events", {
-    artistId,
-    perPage: "100",
-  });
+  const data = await jbFetch<{ events?: JbEvent[] }>(
+    "/events",
+    { artistId, perPage: "100" },
+    onCall,
+  );
   return data.events ?? [];
 }
 
@@ -113,11 +118,11 @@ const cache = new TtlCache<UpcomingEvents>(DAY_MS);
  * call fails or comes back empty we search by name and match on the
  * MusicBrainz link JamBase stores for each artist.
  */
-export async function getUpcomingEvents(mbid: string, name: string): Promise<UpcomingEvents> {
+export async function getUpcomingEvents(mbid: string, name: string, onCall?: OnCall): Promise<UpcomingEvents> {
   return cache.getOrLoad(mbid.toLowerCase(), async () => {
     let byMbid: JbEvent[] = [];
     try {
-      byMbid = await eventsFor(`musicbrainz:${mbid}`);
+      byMbid = await eventsFor(`musicbrainz:${mbid}`, onCall);
     } catch (e) {
       // Only fall through on "not found"-style answers; auth and quota errors are real.
       if (!(e instanceof JamBaseError) || ![400, 404].includes(e.status ?? 0)) throw e;
@@ -127,17 +132,18 @@ export async function getUpcomingEvents(mbid: string, name: string): Promise<Upc
       return { path: "musicbrainz-id", jambaseId: null, events: byMbid };
     }
 
-    const found = await jbFetch<{ artists?: JbArtist[] }>("/artists", {
-      artistName: name,
-      perPage: "10",
-    });
+    const found = await jbFetch<{ artists?: JbArtist[] }>(
+      "/artists",
+      { artistName: name, perPage: "10" },
+      onCall,
+    );
     const artist = matchArtist(found.artists ?? [], mbid, name);
     if (!artist) {
       console.info(`[jambase] ${name}: no matching JamBase artist`);
       return { path: "not-found", jambaseId: null, events: [] };
     }
     const events =
-      artist["x-numUpcomingEvents"] === 0 ? [] : await eventsFor(artist.identifier);
+      artist["x-numUpcomingEvents"] === 0 ? [] : await eventsFor(artist.identifier, onCall);
     console.info(`[jambase] ${name}: found ${events.length} events by name search`);
     return { path: "name-search", jambaseId: artist.identifier, events };
   });
@@ -146,6 +152,6 @@ export async function getUpcomingEvents(mbid: string, name: string): Promise<Upc
 const byIdCache = new TtlCache<JbEvent[]>(DAY_MS);
 
 /** Upcoming events for an artist we already know by JamBase ID (one call). */
-export async function getEventsByJamBaseId(jambaseId: string): Promise<JbEvent[]> {
-  return byIdCache.getOrLoad(jambaseId, () => eventsFor(jambaseId));
+export async function getEventsByJamBaseId(jambaseId: string, onCall?: OnCall): Promise<JbEvent[]> {
+  return byIdCache.getOrLoad(jambaseId, () => eventsFor(jambaseId, onCall));
 }

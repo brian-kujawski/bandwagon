@@ -110,8 +110,15 @@ export function sharedShows(db: Db, seedId: number, otherId: number): LinkShow[]
  * HOP_DAMPING * w(seed, bridge) * w(bridge, candidate), counting only the
  * bridge's shows without any of your bands. Seeds never bridge or get
  * recommended, since a link through one seed is a direct link to it.
+ * Artists in `exclude` (bands you're not interested in) are never recommended
+ * but can still bridge: they may be how two bands you like connect.
  */
-export function recommendFromGraph(db: Db, seedIds: number[], limit = 25): GraphResult {
+export function recommendFromGraph(
+  db: Db,
+  seedIds: number[],
+  limit = 25,
+  exclude: ReadonlySet<number> = new Set(),
+): GraphResult {
   const seeds = new Set(seedIds);
   const seedRows = new Map(seedIds.map((id) => [id, getArtistRow(db, id)!]));
   const row = memo((id: number) => getArtistRow(db, id)!);
@@ -127,7 +134,7 @@ export function recommendFromGraph(db: Db, seedIds: number[], limit = 25): Graph
 
   const firstHop = edgesFrom(db, seedIds);
   for (const e of firstHop) {
-    if (seeds.has(e.b)) continue;
+    if (seeds.has(e.b) || exclude.has(e.b)) continue;
     const c = candidate(e.b);
     c.score += e.weight;
     c.direct.push({ seed: seedRows.get(e.a)!, weight: e.weight, shows: [] });
@@ -139,7 +146,7 @@ export function recommendFromGraph(db: Db, seedIds: number[], limit = 25): Graph
     if (!seeds.has(e.b)) toBridge.set(e.b, [...(toBridge.get(e.b) ?? []), e]);
   }
   for (const e of edgesFrom(db, bridgeIds, seedIds)) {
-    if (seeds.has(e.b)) continue;
+    if (seeds.has(e.b) || exclude.has(e.b)) continue;
     for (const fromSeed of toBridge.get(e.a) ?? []) {
       const weight = HOP_DAMPING * fromSeed.weight * e.weight;
       const c = candidate(e.b);
