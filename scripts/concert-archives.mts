@@ -7,8 +7,8 @@
  * Credits are scarce, so the script:
  *   - only calls get_performer_concerts (2 credits per page of ~50 rows);
  *     show titles already carry the lineup, so no per-concert details calls
- *   - caches every response under data/concert-archives/raw/ and never
- *     re-fetches a cached page
+ *   - stores every response in the database's vault (src/lib/vault.ts) and
+ *     under data/concert-archives/raw/, and never re-fetches a page either holds
  *   - stops before a call would take it over --budget credits
  *   - waits --delay seconds between live calls
  *
@@ -20,6 +20,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { summariseConcerts, type CaConcertRow } from "../src/lib/concertArchives.ts";
+import { DEFAULT_DB_FILE, openDb } from "../src/lib/db.ts";
+import { addPayload, canonicalParams, ensureVault, rebuildConcertArchives } from "../src/lib/vault.ts";
 
 const API = "https://api.parse.bot";
 const PAGE_COST = 2; // get_performer_concerts price in the marketplace listing
@@ -97,7 +99,18 @@ async function callEndpoint(endpoint: string, params: Record<string, string>, at
   throw new Error(`${endpoint} failed with ${res.status}: ${body.slice(0, 300)}`);
 }
 
-async function readCached(file: string): Promise<ConcertsPage | null> {
+const db = openDb(process.env.BANDWAGON_DB || DEFAULT_DB_FILE);
+ensureVault(db);
+
+/** The newest stored copy of a page: the vault first, then the page file. */
+async function readCached(page: number, file: string): Promise<ConcertsPage | null> {
+  const stored = db
+    .prepare(
+      `SELECT body FROM payloads WHERE source = 'parsebot' AND endpoint = 'get_performer_concerts' AND params = ?
+       ORDER BY fetched_at DESC LIMIT 1`,
+    )
+    .get(canonicalParams({ slug, page: String(page) })) as { body: string } | undefined;
+  if (stored) return JSON.parse(stored.body) as ConcertsPage;
   try {
     return JSON.parse(await readFile(file, "utf8")) as ConcertsPage;
   } catch {
@@ -113,7 +126,7 @@ async function main() {
   let reachedEnd = false;
   for (let page = 1; page <= maxPages; page++) {
     const file = path.join(rawDir, `concerts-page-${page}.json`);
-    let data = await readCached(file);
+    let data = await readCached(page, file);
     if (data) {
       console.log(`page ${page}: cached`);
     } else {
@@ -122,7 +135,18 @@ async function main() {
         break;
       }
       console.log(`page ${page}: fetching`);
-      data = (await callEndpoint("get_performer_concerts", { slug, page: String(page) })) as ConcertsPage;
+      const params = { slug, page: String(page) };
+      const creditsBefore = creditsSpent;
+      data = (await callEndpoint("get_performer_concerts", params)) as ConcertsPage;
+      addPayload(db, {
+        source: "parsebot",
+        endpoint: "get_performer_concerts",
+        params,
+        subject: seedName,
+        fetchedAt: new Date().toISOString(),
+        credits: creditsSpent - creditsBefore,
+        body: data,
+      });
       await writeFile(file, JSON.stringify(data, null, 2));
     }
     rows.push(...data.concerts);
@@ -149,6 +173,8 @@ async function main() {
     console.log(`  ${String(c.shows.length).padStart(3)}  ${c.name}  (${dates})`);
   }
   console.log(`\nwrote ${outFile}`);
+  const rebuilt = rebuildConcertArchives(db);
+  console.log(`vault: ${rebuilt.performers} performers, ${rebuilt.concerts} concerts; graph updated`);
 }
 
 main().catch((err) => {

@@ -11,7 +11,7 @@ Type the bands you love, and bandwagon recommends the artists sharing bills with
    - **Sharing bills with your bands**: acts linked to more of your bands rank first, then by link strength. Each says why ("Opening for X on 6 upcoming dates").
    - **One step further**: acts that share a bill with one of those acts on a date none of your bands played. A path *your band → B → C* scores half of `w(your band, B) × w(B, C)`.
 
-Because everything lands in one database, Concert Archives history loaded with `scripts/graph.mts` links up with JamBase shows by artist name, and every search makes the web a little bigger.
+Because everything lands in one database, Concert Archives history (from the vault, below) links up with JamBase shows by artist name, and every search makes the web a little bigger.
 
 ## Running it
 
@@ -42,6 +42,8 @@ npm run build
 - `src/lib/jambase.ts`: upcoming events by MusicBrainz ID (with the name-search fallback) or by JamBase ID.
 - `src/lib/db.ts`: the SQLite store. Tables `artists`, `events`, `appearances` (who played which event, with billing), `fetches` (when each artist was last pulled), and the `cobills` view (one row per pair of acts per shared date, with its weight). Artists match across sources by MusicBrainz, JamBase or Concert Archives ID, or by a unique name.
 - `src/lib/ingest.ts`: writes JamBase events and Concert Archives summaries into the store.
+- `src/lib/vault.ts`: every paid parse.bot response, kept verbatim in the `payloads` table, and the Concert Archives concert and performer ledgers rebuilt from it.
+- `src/lib/portable.ts`: export and merge-import of the vault between machines.
 - `src/lib/graph.ts`: direct and 2-hop ranking over the store, and the "why" text. Unit tested against an in-memory database.
 - `src/lib/recommend.ts`: refreshes each band (daily) and its top neighbours (monthly), then ranks.
 - `src/lib/cobills.ts`: JamBase event helpers (seed detection, billing relation, venue).
@@ -55,8 +57,7 @@ JamBase's storage terms are still unchecked, so the database is for local, non-c
 `scripts/graph.mts` works on the stored data only, with no API calls:
 
 ```bash
-node scripts/graph.mts load-ca data/concert-archives/pup--5.json   # load Concert Archives history
-node scripts/graph.mts links PUP "Prince Daddy & The Hyena"         # direct and one-step links
+node scripts/graph.mts links PUP "Prince Daddy & The Hyena"   # direct and one-step links
 node scripts/graph.mts stats
 ```
 
@@ -69,4 +70,18 @@ PARSE_API_KEY=pmx_... PARSE_SCRAPER_ID=<your scraper id> \
   node scripts/concert-archives.mts pup--5 --name PUP --max-pages 3 --budget 10
 ```
 
-The slug is the one in the band's Concert Archives URL. Each page of about 50 rows costs 2 credits; show titles carry the lineup, so the script never pays for per-concert detail calls. Responses are cached in `data/concert-archives/` (git-ignored) and never re-fetched, and the script stops before going over `--budget` credits. Load the summary it writes into the database with `node scripts/graph.mts load-ca`.
+The slug is the one in the band's Concert Archives URL. Each page of about 50 rows costs 2 credits; show titles carry the lineup, so the script never pays for per-concert detail calls. Every response goes into the database's vault and into `data/concert-archives/raw/` (git-ignored); a page either one holds is never fetched again, and the script stops before going over `--budget` credits.
+
+## Keeping what you paid for
+
+Paid responses live in the `payloads` table and are never deleted. Concert Archives shows in the graph are rebuilt from them, so nothing bought is lost when the parser changes. `scripts/data.mts` looks after them, with no API calls:
+
+```bash
+node scripts/data.mts import-raw           # add pages cached in data/concert-archives/raw before the vault existed
+node scripts/data.mts status               # per band: pages held, date range, credits spent, whether history is complete
+node scripts/data.mts rebuild              # re-derive Concert Archives shows from the vault
+node scripts/data.mts export               # write bandwagon-export.sqlite
+node scripts/data.mts import <file>        # merge an export from another machine
+```
+
+To move between machines (Windows and Linux both work), run `export` on one, copy the file over (USB stick, a cloud drive, anything), and run `import` on the other. Import merges, so fetching on both machines loses nothing, and importing the same file twice is harmless. Copy the export, not `data/bandwagon.db` itself: a copy of the live database taken while the app runs can miss recent writes. Exports are git-ignored; keep them out of GitHub, since Concert Archives' terms restrict sharing.

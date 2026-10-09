@@ -99,7 +99,12 @@ export function getDb(): Db {
   return shared;
 }
 
+const inTransaction = new WeakSet<Db>();
+
+/** Run fn in a transaction. Nested calls join the outer transaction. */
 export function transaction<T>(db: Db, fn: () => T): T {
+  if (inTransaction.has(db)) return fn();
+  inTransaction.add(db);
   db.exec("BEGIN");
   try {
     const out = fn();
@@ -108,6 +113,8 @@ export function transaction<T>(db: Db, fn: () => T): T {
   } catch (e) {
     db.exec("ROLLBACK");
     throw e;
+  } finally {
+    inTransaction.delete(db);
   }
 }
 
