@@ -69,7 +69,10 @@ One API call per lookup fits the free tier's 1,000 calls a month for an MVP, wit
 
 ### Collect forward
 
-If we check upcoming bills regularly and keep what we find, after a few months we have the touring history we can't afford to buy. This needs a source whose terms allow storage (JamBase's are unchecked; Ticketmaster allows only "reasonable periods"; venue sites vary).
+If we keep the bills we find, after a few months we have the touring history we can't afford to buy.
+
+- **Cadence**: build a baseline once for each tracked artist, then re-check **monthly**. Bands announce tours in batches, not daily, and JamBase's 6-month window means a monthly pass still sees each show several times before it happens, which also picks up openers added after the first announcement. This keeps the scheduled job to roughly one call per tracked artist per month, leaving most of the free quota for live lookups.
+- **Terms**: this needs a source whose terms allow storage (JamBase's are unchecked; Ticketmaster allows only "reasonable periods"; venue sites vary).
 
 ---
 
@@ -122,7 +125,7 @@ This is a heuristic to tune by eye against bands we know well. No machine learni
 
 - **Thin-results fallback**: when a band has no co-billed shows announced, say so clearly and suggest trying a related band.
 - **Better coverage of openers**: Ticketmaster attractions for large venues, and a venue-calendar crawler for indie rooms in a few cities.
-- **Collect forward**: store co-bills daily (if terms allow) to build our own history.
+- **Collect forward**: store co-bills from a monthly check (if terms allow) to build our own history.
 - **Filters**: limit to a date range or region, show only support acts or only headliners.
 
 ### Many bands in, a network out
