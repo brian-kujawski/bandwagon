@@ -55,7 +55,8 @@ export function parseCaDate(raw: string): string | null {
   return month ? `${m[3]}-${month}-${m[2].padStart(2, "0")}` : null;
 }
 
-const norm = (s: string) =>
+/** Name key for matching acts across sources: case, spacing and "&" vs "and". */
+export const normName = (s: string) =>
   s.trim().toLowerCase().replace(/\s+&\s+/g, " and ").replace(/\s+/g, " ");
 
 /** The lineup a title spells out, or null when it is an event name. */
@@ -66,9 +67,9 @@ export function lineupFromTitle(title: string, seed: string): string[] | null {
       .split(" / ")
       .map((a) => a.trim())
       .filter((a) => a && a !== "..." && !a.endsWith("..."));
-    return [...new Map(acts.map((a) => [norm(a), a])).values()];
+    return [...new Map(acts.map((a) => [normName(a), a])).values()];
   }
-  return norm(t) === norm(seed) ? [t] : null;
+  return normName(t) === normName(seed) ? [t] : null;
 }
 
 const FESTIVAL_WORDS = /\bfest(ival)?s?\b|2000 ?trees/i;
@@ -97,7 +98,7 @@ export function summariseConcerts(rows: CaConcertRow[], seed: string): CaSummary
   for (const row of rows) {
     const lineup = lineupFromTitle(row.title, seed);
     const date = parseCaDate(row.date);
-    const key = `${date ?? row.date}|${lineup ? lineup.map(norm).sort().join("+") : norm(row.title)}`;
+    const key = `${date ?? row.date}|${lineup ? lineup.map(normName).sort().join("+") : normName(row.title)}`;
     if (seen.has(key)) {
       duplicates += 1;
       continue;
@@ -113,10 +114,10 @@ export function summariseConcerts(rows: CaConcertRow[], seed: string): CaSummary
   for (const s of shows) {
     if (s.festival || !s.lineup) continue;
     for (const act of s.lineup) {
-      if (norm(act) === norm(seed)) continue;
-      const entry = byAct.get(norm(act)) ?? { name: act, shows: [] };
+      if (normName(act) === normName(seed)) continue;
+      const entry = byAct.get(normName(act)) ?? { name: act, shows: [] };
       entry.shows.push({ date: s.date, venue: s.venue, slug: s.slug });
-      byAct.set(norm(act), entry);
+      byAct.set(normName(act), entry);
     }
   }
   const coBills = [...byAct.values()].sort(
