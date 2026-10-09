@@ -268,3 +268,10 @@ details.saved summary {
   font-size: 0.9rem;
   margin-bottom: 0.5rem;
 }
+
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.75rem;
+}

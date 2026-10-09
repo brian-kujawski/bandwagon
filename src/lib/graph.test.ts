@@ -102,6 +102,24 @@ describe("recommendFromGraph", () => {
     expect(describeBridge(oneStep[0].bridges[0])).toBe("Shares bills with Bravo, who plays with Alpha");
   });
 
+  it("spreads a busy act's credit thin one step out", () => {
+    // Alpha plays with Bravo and with Hub. Bravo plays with Charlie only; Hub plays with Delta and 9 others.
+    const H = act("50", "Hub");
+    const a = ingestJamBase(db, [concert("2026-11-01", [A, B]), concert("2026-11-02", [A, H])], { name: "Alpha" }).artistId;
+    ingestJamBase(db, [concert("2026-11-05", [B, C])], { name: "Bravo", jambaseId: "jambase:2" });
+    ingestJamBase(
+      db,
+      [D, ...Array.from({ length: 9 }, (_, i) => act(`6${i}`, `Other ${i}`))].map((x, i) =>
+        concert(`2026-12-${String(i + 1).padStart(2, "0")}`, [H, x]),
+      ),
+      { name: "Hub", jambaseId: "jambase:50" },
+    );
+    const { oneStep } = recommendFromGraph(db, [a]);
+    expect(oneStep[0].artist.name).toBe("Charlie");
+    expect(oneStep[0].score).toBe(0.5);
+    expect(oneStep.find((c) => c.artist.name === "Delta")?.score).toBeCloseTo(0.05);
+  });
+
   it("never recommends or bridges through your own bands", () => {
     const a = ingestJamBase(db, [concert("2026-11-01", [A, X])], { name: "Alpha" }).artistId;
     const x = ingestJamBase(db, [concert("2026-11-02", [X, B])], { name: "X-Ray" }).artistId;

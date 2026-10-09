@@ -58,8 +58,8 @@ describe("recommendForProfile", () => {
     expect(first.refreshed).toHaveLength(2);
     expect(first.waiting).toBe(1);
     expect(callsThisMonth(db, "jambase", NOW)).toBe(2);
-    expect(first.graph.direct.map((c) => c.artist.name)).toEqual(["Zulu"]);
-    expect(first.graph.direct[0].direct).toHaveLength(2);
+    expect(first.direct.candidates.map((c) => c.artist.name)).toEqual(["Zulu"]);
+    expect(first.direct.candidates[0].direct).toHaveLength(2);
 
     const second = await recommendForProfile(db, NOW);
     expect(second.refreshed).toHaveLength(1);
@@ -91,8 +91,8 @@ describe("recommendForProfile", () => {
     });
 
     const out = await recommendForProfile(db, NOW);
-    expect(out.graph.direct).toEqual([]);
-    expect(out.graph.oneStep.map((c) => c.artist.name)).toEqual(["Charlie"]);
+    expect(out.direct).toEqual({ candidates: [], total: 0 });
+    expect(out.oneStep.candidates.map((c) => c.artist.name)).toEqual(["Charlie"]);
   });
 
   it("doesn't look a band up again for a month when JamBase doesn't have it", async () => {
@@ -110,5 +110,25 @@ describe("recommendForProfile", () => {
     const out = await recommendForProfile(db, NOW);
     expect(out.noKey).toBe(true);
     expect(out.refreshed).toEqual([]);
+  });
+});
+
+describe("pages", () => {
+  it("serves a ranked list a page at a time", async () => {
+    vi.stubEnv("JAMBASE_API_KEY", "");
+    const id = mbid();
+    setPref(db, { name: "Alpha", mbid: id }, "liked");
+    const acts: [string, string][] = Array.from({ length: 7 }, (_, i) => [String(100 + i), `Act ${i}`]);
+    // Act i shares i + 1 dates with Alpha, so the order is Act 6 down to Act 0.
+    const events = acts.flatMap((act, i) =>
+      Array.from({ length: i + 1 }, (_, d) => concert(`2026-${String(i + 1).padStart(2, "0")}-${String(d + 1).padStart(2, "0")}`, ["1", "Alpha"], act)),
+    );
+    ingestJamBase(db, events as JbEvent[], { name: "Alpha", mbid: id, jambaseId: "jambase:1" });
+
+    const first = await recommendForProfile(db, NOW, { size: 3 });
+    expect(first.direct.total).toBe(7);
+    expect(first.direct.candidates.map((c) => c.artist.name)).toEqual(["Act 6", "Act 5", "Act 4"]);
+    const last = await recommendForProfile(db, NOW, { size: 3, direct: 2 });
+    expect(last.direct.candidates.map((c) => c.artist.name)).toEqual(["Act 0"]);
   });
 });

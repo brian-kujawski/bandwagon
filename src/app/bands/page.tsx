@@ -3,11 +3,19 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { PrefButtons } from "../pref-buttons";
 import { getDb } from "@/lib/db";
-import { describeBridge, describeDirect, type GraphCandidate, type LinkShow } from "@/lib/graph";
+import { describeBridge, describeDirect, type GraphCandidate, type GraphPage, type LinkShow } from "@/lib/graph";
 import { recommendForProfile, type ProfileOutcome } from "@/lib/recommend";
 
 const MAX_SHOWS_LISTED = 3;
+const MAX_LINKS_LISTED = 3;
 const MAX_BRIDGES_LISTED = 2;
+const PAGE_SIZE = 25;
+
+/** "?page=2" -> 1 (zero-based), anything odd -> 0. */
+function pageParam(raw: string | string[] | undefined): number {
+  const n = Number(Array.isArray(raw) ? raw[0] : raw);
+  return Number.isInteger(n) && n > 1 ? n - 1 : 0;
+}
 
 function formatDate(iso: string | null): string {
   if (!iso) return "Date unknown";
@@ -38,11 +46,14 @@ function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
   return (
     <li className="card">
       <div className="card-title">{name}</div>
-      {c.direct.map((d) => (
+      {c.direct.slice(0, MAX_LINKS_LISTED).map((d) => (
         <div key={d.seed.id} className="why">
           {describeDirect(d, today)}
         </div>
       ))}
+      {c.direct.length > MAX_LINKS_LISTED && (
+        <div className="why meta">and with {c.direct.length - MAX_LINKS_LISTED} more of your bands</div>
+      )}
       {c.direct.length === 0 &&
         c.bridges.slice(0, MAX_BRIDGES_LISTED).map((b) => (
           <div key={`${b.seed.id}-${b.bridge.id}`} className="why">
@@ -65,11 +76,50 @@ function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
   );
 }
 
-export default async function BandsPage() {
+/** Previous / next links for one list, keeping the other list's page. */
+function Pager({
+  page,
+  index,
+  param,
+  other,
+}: {
+  page: GraphPage;
+  index: number;
+  param: "page" | "further";
+  other: Record<string, number>;
+}) {
+  const pages = Math.ceil(page.total / PAGE_SIZE);
+  if (pages <= 1) return null;
+  const href = (i: number) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries({ ...other, [param]: i })) if (v > 0) q.set(k, String(v + 1));
+    const qs = q.toString();
+    return `/bands${qs ? `?${qs}` : ""}`;
+  };
+  return (
+    <p className="pager meta">
+      {index > 0 ? <Link href={href(index - 1)}>← Previous</Link> : <span />}
+      <span>
+        Page {index + 1} of {pages} ({page.total} acts)
+      </span>
+      {index < pages - 1 ? <Link href={href(index + 1)}>Next →</Link> : <span />}
+    </p>
+  );
+}
+
+export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
   await connection(); // reads the database on every request, never at build time
-  const outcome = await recommendForProfile(getDb());
+  const params = await searchParams;
+  const directIndex = pageParam(params.page);
+  const furtherIndex = pageParam(params.further);
+  const outcome = await recommendForProfile(getDb(), new Date(), {
+    direct: directIndex,
+    oneStep: furtherIndex,
+    size: PAGE_SIZE,
+  });
   if (outcome.liked === 0) redirect("/");
-  const { graph, today, noKey, budget } = outcome;
+  const { direct, oneStep, today, noKey, budget } = outcome;
+  const pagers = { page: directIndex, further: furtherIndex };
   const notes = refreshNotes(outcome);
   const names = outcome.liked === 1 ? "the band you like" : `the ${outcome.liked} bands you like`;
 
@@ -95,7 +145,7 @@ export default async function BandsPage() {
         </ul>
       )}
 
-      {graph.direct.length === 0 && graph.oneStep.length === 0 && (
+      {direct.total === 0 && oneStep.total === 0 && (
         <>
           <p className="notice">
             Nothing to go on yet: no shared bills are on record for {names}. Bands announce tours
@@ -107,32 +157,34 @@ export default async function BandsPage() {
         </>
       )}
 
-      {graph.direct.length > 0 && (
+      {direct.total > 0 && (
         <>
           <h2 className="section-title">Sharing bills with your bands</h2>
-          <ol className="list">
-            {graph.direct.map((c) => (
+          <ol className="list" start={directIndex * PAGE_SIZE + 1}>
+            {direct.candidates.map((c) => (
               <Candidate key={c.artist.id} c={c} today={today} />
             ))}
           </ol>
+          <Pager page={direct} index={directIndex} param="page" other={pagers} />
         </>
       )}
 
-      {graph.oneStep.length > 0 && (
+      {oneStep.total > 0 && (
         <>
           <h2 className="section-title">One step further</h2>
           <p className="meta" style={{ marginBottom: "0.75rem" }}>
             Sharing bills, on other dates, with the acts your bands play with.
           </p>
-          <ol className="list">
-            {graph.oneStep.map((c) => (
+          <ol className="list" start={furtherIndex * PAGE_SIZE + 1}>
+            {oneStep.candidates.map((c) => (
               <Candidate key={c.artist.id} c={c} today={today} />
             ))}
           </ol>
+          <Pager page={oneStep} index={furtherIndex} param="further" other={pagers} />
         </>
       )}
 
-      {(graph.direct.length > 0 || graph.oneStep.length > 0) && (
+      {(direct.total > 0 || oneStep.total > 0) && (
         <p className="meta" style={{ marginTop: "1.5rem" }}>
           From upcoming concerts on JamBase plus any history stored locally. Festivals are left
           out.

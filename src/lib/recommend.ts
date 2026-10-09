@@ -1,6 +1,6 @@
 import { callsThisMonth, monthlyBudget, recordCalls, remainingCalls } from "./budget";
 import { getArtistRow, getDb, lastFetched, recordFetch, transaction, type Db } from "./db";
-import { recommendFromGraph, type GraphResult } from "./graph";
+import { affinityPage, rebuildAffinity, type GraphPage } from "./graph";
 import { ingestJamBase, type IngestCounts } from "./ingest";
 import { getEventsByJamBaseId, getUpcomingEvents, MissingJamBaseKeyError } from "./jambase";
 import { artistIdsFor, listPrefs, type BandPref } from "./prefs";
@@ -39,7 +39,9 @@ export type SeedStatus =
   | { kind: "error" };
 
 export type ProfileOutcome = {
-  graph: GraphResult;
+  /** The requested page of each list. */
+  direct: GraphPage;
+  oneStep: GraphPage;
   today: string;
   /** How many bands you like. */
   liked: number;
@@ -88,7 +90,8 @@ async function refreshSeed(db: Db, seed: Seed, now: Date): Promise<SeedStatus> {
 async function widen(db: Db, seedIds: number[], exclude: Set<number>, now: Date): Promise<void> {
   const n = expandCount();
   if (n === 0) return;
-  for (const c of recommendFromGraph(db, seedIds, n, exclude).direct) {
+  rebuildAffinity(db, seedIds, exclude);
+  for (const c of affinityPage(db, "direct", { limit: n, linksShown: 0 }).candidates) {
     const id = c.artist.jambase_id;
     if (!id || isFresh(lastFetched(db, c.artist.id, "jambase"), now)) continue;
     if (remainingCalls(db, "jambase", now) < 1) return;
@@ -112,10 +115,12 @@ async function widen(db: Db, seedIds: number[], exclude: Set<number>, now: Date)
  * co-bills from Concert Archives. Bands you're not interested in are left
  * out of the results.
  */
+export type PageRequest = { direct?: number; oneStep?: number; size?: number };
+
 export async function recommendForProfile(
   db: Db = getDb(),
   now: Date = new Date(),
-  limit = 25,
+  pages: PageRequest = {},
 ): Promise<ProfileOutcome> {
   const likedPrefs = listPrefs(db, "liked");
   const { seeds, exclude } = transaction(db, () => {
@@ -151,8 +156,12 @@ export async function recommendForProfile(
   }
   if (!noKey && seedIds.length > 0) await widen(db, seedIds, exclude, now);
 
+  rebuildAffinity(db, seedIds, exclude);
+  const size = pages.size ?? 25;
+  const page = (list: "direct" | "oneStep", n = 0) => affinityPage(db, list, { offset: n * size, limit: size });
   return {
-    graph: seedIds.length ? recommendFromGraph(db, seedIds, limit, exclude) : { direct: [], oneStep: [] },
+    direct: page("direct", pages.direct),
+    oneStep: page("oneStep", pages.oneStep),
     today: now.toISOString().slice(0, 10),
     liked: likedPrefs.length,
     refreshed,

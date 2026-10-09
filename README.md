@@ -10,7 +10,8 @@ Like the bands you love, as many as you want, and bandwagon recommends the artis
    - Every JamBase call is counted, and the app stops at `JAMBASE_MONTHLY_BUDGET` calls a month (default 900, under the free tier's 1,000). The results page shows the month's count.
 4. **Rank.** Each shared concert date adds `1 / (acts on the bill − 1)` to the link between two acts, so a run of tour dates on a small bill counts most.
    - **Sharing bills with your bands**: acts linked to more of your bands rank first, then by link strength. Each says why ("Opening for X on 6 upcoming dates").
-   - **One step further**: acts that share a bill with one of those acts on a date none of your bands played. A path *your band → B → C* scores half of `w(your band, B) × w(B, C)`.
+   - **One step further**: acts that share a bill with one of your strongest direct links (the top 2,000) on a date none of your bands played. Each link passes on its own score divided by how many acts it has played with, so an act that has played with everyone spreads its credit thin.
+   - Scores for every artist are stored and recomputed only when your bands or the stored shows change; results come 25 to a page. A synthetic graph of 100,000 artists, 300,000 shows and 10,000 liked bands took about 10 s to rescore after new shows, under 2 s after liking a band, and about 0.2 s per results page.
 
 Because everything lands in one database, Concert Archives history (from the vault, below) links up with JamBase shows by artist name, and every search makes the web a little bigger.
 
@@ -47,7 +48,7 @@ npm run build
 - `src/lib/prefs.ts`: liked and not-interested bands, keyed by MusicBrainz ID, plus bulk liking from a list.
 - `src/lib/budget.ts`: monthly API call counts per machine, and the JamBase budget.
 - `src/lib/portable.ts`: export and merge-import of the vault, your band choices and call counts between machines.
-- `src/lib/graph.ts`: direct and 2-hop ranking over the store, and the "why" text. Unit tested against an in-memory database.
+- `src/lib/graph.ts`: direct and 2-hop scores for every artist, stored in `affinity` and read a page at a time, and the "why" text. Unit tested against an in-memory database.
 - `src/lib/recommend.ts`: refreshes a few liked bands per visit and the top neighbours (monthly, within the budget), then ranks.
 - `src/lib/cobills.ts`: JamBase event helpers (seed detection, billing relation, venue).
 - `src/lib/concertArchives.ts`: turns Concert Archives concert lists into co-bills (lineups from show titles, festival filter, de-duplication).
