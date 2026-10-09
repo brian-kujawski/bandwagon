@@ -1,8 +1,8 @@
 /**
  * A small in-process cache with per-entry expiry.
  *
- * Kept in memory on purpose: JamBase's storage terms are not checked yet,
- * so nothing from it is written to disk or a database.
+ * Saves repeat API calls within a process. The shows themselves also go into
+ * the local co-bill store (db.ts), which is what recommendations read.
  */
 export class TtlCache<V> {
   private entries = new Map<string, { value: V; expires: number }>();

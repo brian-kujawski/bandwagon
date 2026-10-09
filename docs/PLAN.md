@@ -1,6 +1,6 @@
 # bandwagon: data sources, MVP plan, and roadmap
 
-_Drafted 2026-10-09, updated the same day after the JamBase test. Pricing and terms were read from each provider's public pages on that date; items marked "unverified" still need checking once we have API keys._
+_Drafted 2026-10-09, updated the same day after the JamBase test and again when multi-band input and the local database landed. Pricing and terms were read from each provider's public pages on that date; items marked "unverified" still need checking once we have API keys._
 
 ## The idea
 
@@ -125,14 +125,33 @@ This is a heuristic to tune by eye against bands we know well. No machine learni
 
 - **Thin-results fallback**: when a band has no co-billed shows announced, say so clearly and suggest trying a related band.
 - **Better coverage of openers**: Ticketmaster attractions for large venues, and a venue-calendar crawler for indie rooms in a few cities.
-- **Collect forward**: store co-bills from a monthly check (if terms allow) to build our own history.
+- **Collect forward**: store co-bills from a monthly check (if terms allow) to build our own history. The store exists now (see below); the scheduled monthly pass does not yet.
 - **Filters**: limit to a date range or region, show only support acts or only headliners.
 
-### Many bands in, a network out
+### Many bands in, a network out (started 2026-10-09)
 
-- Accept a list of favourite bands. Run the co-bill engine on each, then rank candidates by how many of your favourites they connect to and how strongly. An artist who tours with three of your favourites outranks one who tours with one of them many times.
-- **Graph view**: favourites as seeds, recommended artists as nodes, edges weighted by shared shows. A force-directed layout (for example D3 or Sigma.js) lets you explore second-degree connections ("touring with someone who toured with your favourite").
-- **Data constraint**: a persistent graph needs stored co-billing data, which depends on the storage terms of whichever source we use. Upcoming-only data also makes the graph sparse until "collect forward" has run for a while.
+Built so far:
+
+- **Several bands in.** Pick up to 10 bands; candidates are ranked by how many of your bands they connect to, then by link strength. An artist who tours with three of your favourites outranks one who tours with one of them many times.
+- **Our own database.** A local SQLite file with `artists`, `events` and `appearances` (who played which event, headliner flag, billing order). Every source writes to the same tables, so JamBase upcoming shows and Concert Archives history link up (by artist name where there is no shared ID). A `cobills` view gives one weighted edge per pair of acts per shared date.
+- **Two hops.** If A plays with B next month and B plays with C on another date, C is suggested under "One step further". To have B's other dates, the app also looks up the top five acts linked to your bands (one JamBase call each, re-checked monthly).
+- **Data constraint**: JamBase's storage terms are still unchecked, so the database stays local and non-commercial until they are.
+
+### The band web: clusters and bridges (next)
+
+With bills stored as a graph, richer signals become queries rather than new data pulls. In rough order of effort:
+
+1. **Shared neighbours.** B and C each played separate shows with D last year: B and C are probably alike even if they never shared a bill. Score pairs by how many neighbours they share, weighted by how specific those neighbours are (sharing a small local opener says more than sharing a huge headliner). Partly covered today when B and C are both your bands.
+2. **Clusters (scenes).** Run community detection (Louvain or label propagation) over the weighted graph to find groups of bands that keep playing together: a city's scene, a label's roster, a touring circuit. Recommend the strongest members of the clusters your bands sit in, and name the cluster ("the Philly emo bills").
+3. **Bridges.** When a new date links two clusters that had few or no edges between them, it is a bridge: a band crossing scenes. Flag these as they arrive in the monthly refresh ("Band X just booked dates with both your punk and your shoegaze favourites"). Betweenness centrality finds the acts that already sit between clusters.
+4. **Graph view.** Favourites as seeds, recommended artists as nodes, edges weighted by shared shows, clusters coloured. A force-directed layout (for example D3 or Sigma.js) lets you explore.
+5. **Time.** Weight recent shows above old ones, and treat upcoming shows as news. A pairing that keeps recurring across years is a stronger link than one tour.
+
+What it needs underneath:
+
+- **Coverage.** The web is only as dense as the shows stored. The monthly refresh should walk outward from tracked bands a step at a time, within the JamBase quota, and Concert Archives history fills in the past for bands worth the parse.bot credits.
+- **Identity.** Matching acts across sources by name is naive ("Low" vs. "Low"). Store MusicBrainz IDs for neighbours when we can resolve them, and flag ambiguous names rather than merging them.
+- **Scale.** SQLite handles this comfortably for a personal experiment. If the graph grows to millions of edges or needs heavier graph algorithms, export to a graph library (for example NetworkX or graphology) in a batch job rather than switching databases.
 
 ### Spotify integration
 

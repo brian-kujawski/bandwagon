@@ -142,3 +142,10 @@ export async function getUpcomingEvents(mbid: string, name: string): Promise<Upc
     return { path: "name-search", jambaseId: artist.identifier, events };
   });
 }
+
+const byIdCache = new TtlCache<JbEvent[]>(DAY_MS);
+
+/** Upcoming events for an artist we already know by JamBase ID (one call). */
+export async function getEventsByJamBaseId(jambaseId: string): Promise<JbEvent[]> {
+  return byIdCache.getOrLoad(jambaseId, () => eventsFor(jambaseId));
+}

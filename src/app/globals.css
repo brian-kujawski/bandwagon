@@ -167,3 +167,55 @@ a.card:hover {
   font-size: 1rem;
   margin: 1.5rem 0 0.75rem;
 }
+
+.picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.4rem 0.25rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 0.9rem;
+}
+
+.chip-remove {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0 0.3rem;
+}
+
+.chip-remove:hover {
+  color: var(--accent);
+}
+
+.go {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.search input:disabled,
+.search button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.notes {
+  list-style: none;
+  margin-bottom: 1rem;
+}
