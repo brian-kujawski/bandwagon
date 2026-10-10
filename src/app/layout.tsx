@@ -15,6 +15,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <Link href="/" className="wordmark">
             bandwagon
           </Link>
+          <nav className="site-nav">
+            <Link href="/likes">Your bands</Link>
+            <Link href="/bands">Suggestions</Link>
+          </nav>
         </header>
         <main>{children}</main>
         <footer className="site-footer">

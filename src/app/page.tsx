@@ -1,41 +1,11 @@
 import Link from "next/link";
-import { setBandPref } from "./actions";
 import { PrefButtons } from "./pref-buttons";
 import { getDb } from "@/lib/db";
 import { searchArtists, type ArtistCandidate } from "@/lib/musicbrainz";
-import { countPrefs, getPref, listPrefs, type BandPref } from "@/lib/prefs";
-
-/** How many saved bands each list shows before "and N more". */
-const SHOWN = 100;
+import { countPrefs, getPref } from "@/lib/prefs";
 
 function describe(c: ArtistCandidate): string {
   return [c.type, c.area ?? c.country, c.years, c.tags.join(", ")].filter(Boolean).join(" · ");
-}
-
-function SavedChips({ prefs, total }: { prefs: BandPref[]; total: number }) {
-  return (
-    <ul className="chips">
-      {prefs.map((p) => (
-        <li key={p.key} className="chip">
-          {p.name}
-          <form action={setBandPref}>
-            <input type="hidden" name="name" value={p.name} />
-            {p.mbid && <input type="hidden" name="mbid" value={p.mbid} />}
-            <button
-              type="submit"
-              name="status"
-              value="cleared"
-              className="chip-remove"
-              aria-label={`Remove ${p.name}`}
-            >
-              ×
-            </button>
-          </form>
-        </li>
-      ))}
-      {total > prefs.length && <li className="meta">and {total - prefs.length} more</li>}
-    </ul>
-  );
 }
 
 export default async function Home({ searchParams }: PageProps<"/">) {
@@ -45,9 +15,6 @@ export default async function Home({ searchParams }: PageProps<"/">) {
 
   const db = getDb();
   const likedCount = countPrefs(db, "liked");
-  const liked = listPrefs(db, "liked", { limit: SHOWN });
-  const hiddenCount = countPrefs(db, "not_interested");
-  const hidden = listPrefs(db, "not_interested", { limit: SHOWN });
 
   let candidates: ArtistCandidate[] = [];
   let failed = false;
@@ -70,18 +37,13 @@ export default async function Home({ searchParams }: PageProps<"/">) {
 
       {likedCount > 0 && (
         <div className="picked">
-          <SavedChips prefs={liked} total={likedCount} />
+          <Link href="/likes">
+            Your {likedCount === 1 ? "band" : `${likedCount} bands`}
+          </Link>
           <Link className="go" href="/bands">
             Find bands like {likedCount === 1 ? "this one" : `these ${likedCount}`} →
           </Link>
         </div>
-      )}
-
-      {hiddenCount > 0 && (
-        <details className="saved">
-          <summary>Not interested ({hiddenCount})</summary>
-          <SavedChips prefs={hidden} total={hiddenCount} />
-        </details>
       )}
 
       <form className="search" action="/" method="get">

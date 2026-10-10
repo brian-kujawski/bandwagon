@@ -23,6 +23,13 @@ describe("band preferences", () => {
     expect(getPref(db, { name: "nope" })).toBe("not_interested");
   });
 
+  it("finds saved bands by part of the name", () => {
+    for (const name of ["PUP", "Pupil", "100% Gecs", "Charly Bliss"]) setPref(db, { name }, "liked");
+    expect(listPrefs(db, "liked", { search: "pup" }).map((p) => p.name)).toEqual(["PUP", "Pupil"]);
+    expect(listPrefs(db, "liked", { search: "%" }).map((p) => p.name)).toEqual(["100% Gecs"]);
+    expect(countPrefs(db, "liked", "bliss")).toBe(1);
+  });
+
   it("clears a band without forgetting that it was cleared", () => {
     setPref(db, { name: "PUP", mbid: MBID }, "liked");
     setPref(db, { name: "PUP", mbid: MBID.toUpperCase() }, "cleared");

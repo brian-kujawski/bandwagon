@@ -4,7 +4,7 @@ Like the bands you love, as many as you want, and bandwagon recommends the artis
 
 ## How it works
 
-1. **Like your bands.** The search box queries [MusicBrainz](https://musicbrainz.org) and lists every artist with that name, with the disambiguation note, area, years active, and top tags, so you can like the right "Low". There is no cap, and `node scripts/data.mts like <file>` likes a whole list at once. Mark bands "Not interested" to keep them out of results; they can still connect two bands you like.
+1. **Like your bands.** The search box queries [MusicBrainz](https://musicbrainz.org) and lists every artist with that name, with the disambiguation note, area, years active, and top tags, so you can like the right "Low". There is no cap, and `node scripts/data.mts like <file>` likes a whole list at once. Mark bands "Not interested" to keep them out of results; they can still connect two bands you like. **Your bands** (`/likes`) lists both, 100 to a page with a name filter, where you can remove a band or check its concert history (below).
 2. **Collect their shows.** Each visit to the results page asks the [JamBase Data API](https://data.jambase.com) for the upcoming events of a few liked bands that haven't been checked for a month (`BANDWAGON_REFRESH_PER_VISIT`, default 5), by MusicBrainz ID with a name-search fallback, and stores every concert bill in a local SQLite database. Festivals are left out.
 3. **Widen the web.** The top five directly linked acts get their own upcoming shows looked up too (one JamBase call each, re-checked at most monthly), so the database learns who *they* play with.
    - Every JamBase call is counted, and the app stops at `JAMBASE_MONTHLY_BUDGET` calls a month (default 900, under the free tier's 1,000). The results page shows the month's count.
@@ -66,7 +66,9 @@ npm run build
 - `src/lib/metro.ts`: the monthly pull of every upcoming concert around home, with the first-page check that JamBase applied the area filter, resuming, and its own monthly call cap.
 - `src/lib/cobills.ts`: JamBase event helpers (seed detection, billing relation, venue).
 - `src/lib/concertArchives.ts`: turns Concert Archives concert lists into co-bills (lineups from show titles, festival filter, de-duplication).
-- `src/app/`: band search and your saved bands (`page.tsx`), the results page (`bands/page.tsx`), and the like / not-interested server action (`actions.ts`). Old `/artist/<mbid>` links redirect home.
+- `src/lib/parsebot.ts`: the parse.bot client (key from the environment, pacing, one retry on its stalled 401s).
+- `src/lib/backfill.ts`: confirmed concert history checks, run one at a time from a queue, with their state in `ca_backfill`.
+- `src/app/`: band search (`page.tsx`), your bands with remove and history-check buttons (`likes/page.tsx`), the results page (`bands/page.tsx`), and the server actions (`actions.ts`). Old `/artist/<mbid>` links redirect home.
 
 JamBase's storage terms are still unchecked, so the database is for local, non-commercial experimenting. Don't deploy it publicly or share the file until they are.
 
@@ -80,6 +82,13 @@ node scripts/graph.mts stats
 ```
 
 ## Concert Archives history (experimental)
+
+On **Your bands**, each liked band has a "Check concert history" button. It asks first, since parse.bot credits are limited and fairly expensive, then fetches the band's last five years of shows from Concert Archives in the background, one band at a time, and the page shows how it's going and what's stored. Nothing calls parse.bot without that confirmation.
+
+- The first check finds the band on Concert Archives (2 credits). When several performers share the name, or none matches exactly, the page lists them to pick from; the search is kept, so picking costs nothing extra.
+- Then it pages back through the band's shows, newest first, 2 credits per page of about 50, until it reaches shows five years old or the end of the list. One check spends at most `PARSE_CHECK_MAX_CREDITS` (default 30); "Continue history check" carries on from there.
+- A later check ("Check for new shows") refetches the top of the list, where new shows appear, and stops as soon as it meets shows the vault already holds, or jumps past them when the five years aren't complete yet. A stored page is never paid for twice.
+- Put `PARSE_API_KEY` and `PARSE_SCRAPER_ID` in `.env.local`; without them the button is hidden.
 
 `scripts/concert-archives.mts` pulls a band's past shows from Concert Archives through a parse.bot subscription to the marketplace "concertarchives.org API", then tallies who shared a bill. It is a personal, non-commercial experiment; Concert Archives' terms restrict reuse without permission, so its output stays local.
 
