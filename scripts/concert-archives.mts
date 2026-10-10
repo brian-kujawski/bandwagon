@@ -21,9 +21,9 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { summariseConcerts, type CaConcertRow } from "../src/lib/concertArchives.ts";
 import { DEFAULT_DB_FILE, openDb } from "../src/lib/db.ts";
+import { parseBotClient, ParseBotError } from "../src/lib/parsebot.ts";
 import { addPayload, canonicalParams, ensureVault, rebuildConcertArchives } from "../src/lib/vault.ts";
 
-const API = "https://api.parse.bot";
 const PAGE_COST = 2; // get_performer_concerts price in the marketplace listing
 const OUT_DIR = path.join("data", "concert-archives");
 
@@ -58,45 +58,18 @@ const maxPages = Number(values["max-pages"]);
 const budget = Number(values.budget);
 const delayMs = Number(values.delay) * 1000;
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const client = parseBotClient({ apiKey, scraperId }, { delayMs, log: (line) => console.log(`  ${line}`) });
 let creditsSpent = 0;
-let lastLiveCall = 0;
 
-async function callEndpoint(endpoint: string, params: Record<string, string>, attempt = 1): Promise<unknown> {
-  const wait = lastLiveCall + delayMs - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastLiveCall = Date.now();
-
-  const url = `${API}/scraper/${scraperId}/${endpoint}?${new URLSearchParams(params)}`;
-  const started = Date.now();
-  const res = await fetch(url, {
-    headers: { "X-API-Key": apiKey! },
-    signal: AbortSignal.timeout(240_000),
-  });
-  const charged = Number(res.headers.get("x-credits-charged") ?? 0);
-  creditsSpent += charged;
-  const remaining = res.headers.get("x-credits-remaining");
-  console.log(
-    `  ${endpoint} ${JSON.stringify(params)} -> ${res.status} in ${((Date.now() - started) / 1000).toFixed(1)}s, ` +
-      `charged ${charged}, balance ${remaining ?? "?"}`,
-  );
-
-  if (res.ok) return ((await res.json()) as { data: unknown }).data;
-
-  const body = await res.text();
-  // parse.bot sometimes stalls ~2 minutes and then answers a valid key with
-  // 401. Those calls aren't charged, so one retry is cheap.
-  const retryable =
-    (res.status === 401 && Date.now() - started > 60_000) ||
-    res.status === 429 ||
-    (res.status === 503 && res.headers.has("retry-after"));
-  if (retryable && attempt === 1) {
-    const after = Number(res.headers.get("retry-after") ?? 20);
-    console.log(`  retrying once in ${after}s`);
-    await sleep(after * 1000);
-    return callEndpoint(endpoint, params, attempt + 1);
+async function callEndpoint(endpoint: "get_performer_concerts", params: Record<string, string>): Promise<unknown> {
+  try {
+    const { data, credits } = await client.call(endpoint, params);
+    creditsSpent += credits;
+    return data;
+  } catch (e) {
+    if (e instanceof ParseBotError) creditsSpent += e.credits;
+    throw e;
   }
-  throw new Error(`${endpoint} failed with ${res.status}: ${body.slice(0, 300)}`);
 }
 
 const db = openDb(process.env.BANDWAGON_DB || DEFAULT_DB_FILE);
