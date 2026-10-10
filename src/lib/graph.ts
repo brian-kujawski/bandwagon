@@ -3,11 +3,17 @@
  * each shared concert date adds 1 / (acts on the bill - 1) to the edge between
  * two acts (the `cobills` view in db.ts).
  *
- * Two signals:
- *   - direct: the artist shared a bill with one or more of your bands. Artists
- *     linked to more of your bands rank first, then by summed edge weight.
+ * Upcoming dates count UPCOMING_BOOST times a past date: the point is shows to
+ * go and see, and a band touring now is fresher than one that toured years ago.
+ *
+ * Two signals, added into one score:
+ *   - direct: the artist shared a bill with one or more of your bands.
  *   - one step further: the artist shared a bill with an act that shared a bill
  *     with one of your bands (A plays with B, B plays with C, so try C).
+ * Each link counts 1 - e^-w, so it saturates near 1: many dates with one band
+ * can't outweigh links to several of your bands, and one slot on a huge bill
+ * counts for little. Breadth across your bands is what ranks an artist high,
+ * whether it comes directly or one step out.
  *
  * Scores for every artist are computed in one pass and stored (`affinity`),
  * so a results page reads one slice of a ranked table. That keeps a page the
@@ -21,6 +27,12 @@ import { getArtistRow, transaction, type ArtistRow, type Db } from "./db.ts";
 
 /** A 2-hop path counts for this share of its weight. */
 export const HOP_DAMPING = 0.5;
+
+/** A shared date that hasn't happened yet counts this much more than a past one. */
+export const UPCOMING_BOOST = 1.25;
+
+/** Bump when the scoring changes, so stored scores are redone. */
+const SCORING_VERSION = 2;
 
 /**
  * "One step further" goes out from at most this many of your strongest direct
@@ -43,17 +55,13 @@ export type BridgeLink = { seed: ArtistRow; bridge: ArtistRow; weight: number };
 
 export type GraphCandidate = {
   artist: ArtistRow;
+  /** Direct plus one-step-further credit. */
   score: number;
+  /** The share of `score` that comes from one step further. */
+  bridged: number;
   direct: DirectLink[];
   /** Strongest 2-hop paths first. */
   bridges: BridgeLink[];
-};
-
-export type GraphResult = {
-  /** Linked to at least one of your bands directly. */
-  direct: GraphCandidate[];
-  /** Linked only through another act. */
-  oneStep: GraphCandidate[];
 };
 
 export type GraphPage = {
@@ -105,7 +113,8 @@ CREATE TABLE IF NOT EXISTS profile_artists (
   artist_id INTEGER PRIMARY KEY,
   role TEXT NOT NULL               -- 'seed' (a band you like) or 'excluded' (not interested)
 );
--- The cobill_events view, stored: one row per ordered pair of acts per concert.
+-- The cobill_events view, stored: one row per ordered pair of acts per concert,
+-- with upcoming dates boosted.
 CREATE TABLE IF NOT EXISTS pair_events (
   a INTEGER NOT NULL, b INTEGER NOT NULL, event_id INTEGER NOT NULL, date_key TEXT NOT NULL, w REAL NOT NULL
 );
@@ -119,16 +128,30 @@ CREATE INDEX IF NOT EXISTS edges_free_b ON edges_free (b);
 CREATE TABLE IF NOT EXISTS affinity (
   artist_id INTEGER PRIMARY KEY,
   links INTEGER NOT NULL,          -- how many of your bands it shared a bill with
-  direct REAL NOT NULL,            -- summed edge weight to your bands
-  bridged REAL NOT NULL            -- one-step-further score
+  direct REAL NOT NULL,            -- sum of 1 - e^-w over your bands
+  bridged REAL NOT NULL,           -- one-step-further credit
+  score REAL NOT NULL DEFAULT 0    -- direct + bridged, what the list is ranked by
 );
-CREATE INDEX IF NOT EXISTS affinity_direct ON affinity (links DESC, direct DESC);
-CREATE INDEX IF NOT EXISTS affinity_bridged ON affinity (bridged DESC);
+CREATE INDEX IF NOT EXISTS affinity_score ON affinity (score DESC);
 CREATE TABLE IF NOT EXISTS affinity_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
 
-/** The stored shows' state; when it changes the edge table is redone. */
-function showsSignature(db: Db): string {
+/** Create the score tables, dropping a stored `affinity` from before the combined score. */
+function ensureAffinitySchema(db: Db): void {
+  const cols = db.prepare("SELECT name FROM pragma_table_info('affinity')").all() as { name: string }[];
+  if (cols.length > 0 && !cols.some((c) => c.name === "score")) {
+    // Derived data only: it is rebuilt from the stored shows on the next pass.
+    db.exec(`DROP INDEX IF EXISTS affinity_direct; DROP INDEX IF EXISTS affinity_bridged;
+      DROP TABLE affinity; DROP TABLE IF EXISTS affinity_state;`);
+  }
+  db.exec(AFFINITY_SCHEMA);
+}
+
+/**
+ * The stored shows' state; when it changes the edge table is redone. Today's
+ * date is part of it, since a show moves from upcoming to past.
+ */
+function showsSignature(db: Db, today: string): string {
   const counts = db
     .prepare(
       `SELECT (SELECT COUNT(*) FROM events) AS e, (SELECT MAX(id) FROM events) AS m,
@@ -136,7 +159,7 @@ function showsSignature(db: Db): string {
               (SELECT COUNT(*) FROM artists) AS ar`,
     )
     .get();
-  return JSON.stringify(counts);
+  return JSON.stringify({ ...counts, today, v: SCORING_VERSION });
 }
 
 /** What the stored scores were computed from; when it changes they are redone. */
@@ -145,26 +168,37 @@ function inputsSignature(shows: string, seedIds: number[], exclude: Iterable<num
   return createHash("sha256").update(`${ids(seedIds)}|${ids(exclude)}|${shows}`).digest("hex");
 }
 
+/** YYYY-MM-DD, the form stored show dates take. */
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
 /**
  * Score every artist against your bands and store the result. Skipped when
  * nothing has changed since the last time.
  *
- * - direct = sum over your bands of w(band, artist)
- * - bridged = HOP_DAMPING * sum over bridges B of direct(B) * w'(B, artist) / partners(B),
+ * With w(x, y) the summed co-bill weight (upcoming dates boosted) and
+ * s(w) = 1 - e^-w:
+ * - direct = sum over your bands of s(w(band, artist))
+ * - bridged = HOP_DAMPING * sum over bridges B of direct(B) * s(w'(B, artist)) / sqrt(partners(B)),
  *   where the bridges are your MAX_BRIDGES strongest direct links, w' counts
  *   only shows none of your bands played, and partners(B) is how many acts B
- *   has shared those bills with. Dividing by it means an act
- *   that has played with everyone spreads its credit thin instead of pulling
- *   the whole graph into "one step further".
+ *   has shared those bills with. Dividing by it means an act that has played
+ *   with everyone spreads its credit thinner; the square root keeps a typical
+ *   touring act's links worth enough to sit among the direct ones.
+ * - score = direct + bridged
  */
-export function rebuildAffinity(db: Db, seedIds: number[], exclude: Iterable<number> = []): boolean {
-  db.exec(AFFINITY_SCHEMA);
+export function rebuildAffinity(
+  db: Db,
+  seedIds: number[],
+  exclude: Iterable<number> = [],
+  today: string = isoDay(new Date()),
+): boolean {
+  ensureAffinitySchema(db);
   const state = (key: string) =>
     (db.prepare("SELECT value FROM affinity_state WHERE key = ?").get(key) as { value: string } | undefined)?.value;
   const setState = db.prepare(
     "INSERT INTO affinity_state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
   );
-  const shows = showsSignature(db);
+  const shows = showsSignature(db, today);
   const signature = inputsSignature(shows, seedIds, exclude);
   if (state("inputs") === signature) return false;
 
@@ -173,10 +207,15 @@ export function rebuildAffinity(db: Db, seedIds: number[], exclude: Iterable<num
     if (state("shows") !== shows) {
       // Bulk loads are quicker with the secondary index built afterwards.
       db.exec(`DROP INDEX IF EXISTS edges_b; DROP INDEX IF EXISTS pair_events_a;
-        DELETE FROM edges; DELETE FROM pair_events;
-        INSERT INTO pair_events (a, b, event_id, date_key, w)
-          SELECT a, b, event_id, COALESCE(date, 'event ' || event_id), weight FROM cobill_events;
-        INSERT INTO edges (a, b, w)
+        DELETE FROM edges; DELETE FROM pair_events;`);
+      // A show with no date counts as past.
+      db.prepare(
+        `INSERT INTO pair_events (a, b, event_id, date_key, w)
+         SELECT a, b, event_id, COALESCE(date, 'event ' || event_id),
+                weight * CASE WHEN date >= ? THEN ? ELSE 1 END
+         FROM cobill_events`,
+      ).run(today, UPCOMING_BOOST);
+      db.exec(`INSERT INTO edges (a, b, w)
           SELECT a, b, SUM(w) FROM (SELECT a, b, MAX(w) AS w FROM pair_events GROUP BY a, b, date_key)
           GROUP BY a, b;
         CREATE INDEX edges_b ON edges (b);
@@ -192,7 +231,7 @@ export function rebuildAffinity(db: Db, seedIds: number[], exclude: Iterable<num
     db.exec(`
       -- CROSS JOIN keeps SQLite walking from your bands into edges, not the other way.
       INSERT INTO affinity (artist_id, links, direct, bridged)
-      SELECT e.b, COUNT(*), SUM(e.w), 0
+      SELECT e.b, COUNT(*), SUM(1 - exp(-e.w)), 0
       FROM profile_artists s CROSS JOIN edges e ON e.a = s.artist_id
       WHERE s.role = 'seed' AND e.b NOT IN (SELECT artist_id FROM profile_artists WHERE role = 'seed')
       GROUP BY e.b;
@@ -200,7 +239,7 @@ export function rebuildAffinity(db: Db, seedIds: number[], exclude: Iterable<num
       CREATE TEMP TABLE IF NOT EXISTS bridges (artist_id INTEGER PRIMARY KEY, direct REAL NOT NULL);
       DELETE FROM temp.bridges;
       INSERT INTO temp.bridges
-        SELECT artist_id, direct FROM affinity ORDER BY links DESC, direct DESC LIMIT ${MAX_BRIDGES};
+        SELECT artist_id, direct FROM affinity ORDER BY direct DESC LIMIT ${MAX_BRIDGES};
 
       -- Only edges out of bridges are needed.
       CREATE TEMP TABLE IF NOT EXISTS seed_events (event_id INTEGER PRIMARY KEY);
@@ -218,7 +257,7 @@ export function rebuildAffinity(db: Db, seedIds: number[], exclude: Iterable<num
     `);
     db.prepare(
       `INSERT INTO affinity (artist_id, links, direct, bridged)
-       SELECT f.b, 0, 0, ? * SUM(br.direct * f.w / d.partners)
+       SELECT f.b, 0, 0, ? * SUM(br.direct * (1 - exp(-f.w)) / sqrt(d.partners))
        FROM temp.bridges br
        CROSS JOIN edges_free f ON f.a = br.artist_id
        JOIN (SELECT a, COUNT(*) AS partners FROM edges_free GROUP BY a) d ON d.a = br.artist_id
@@ -226,6 +265,8 @@ export function rebuildAffinity(db: Db, seedIds: number[], exclude: Iterable<num
        GROUP BY f.b
        ON CONFLICT (artist_id) DO UPDATE SET bridged = excluded.bridged`,
     ).run(HOP_DAMPING);
+    db.exec(`DROP INDEX IF EXISTS affinity_score; UPDATE affinity SET score = direct + bridged;
+      CREATE INDEX affinity_score ON affinity (score DESC);`);
     setState.run("inputs", signature);
   });
   return true;
@@ -234,29 +275,27 @@ export function rebuildAffinity(db: Db, seedIds: number[], exclude: Iterable<num
 const NOT_EXCLUDED = "artist_id NOT IN (SELECT artist_id FROM profile_artists WHERE role = 'excluded')";
 
 /**
- * One page of a ranked list, from the scores `rebuildAffinity` stored, with
+ * One page of the ranked list, from the scores `rebuildAffinity` stored, with
  * the links that explain each candidate. Only the page's candidates get their
- * shows looked up.
+ * shows looked up. `linkedOnly` keeps to artists that shared a bill with one
+ * of your bands.
  */
 export function affinityPage(
   db: Db,
-  list: "direct" | "oneStep",
-  page: { offset?: number; limit?: number; linksShown?: number } = {},
+  page: { offset?: number; limit?: number; linksShown?: number; linkedOnly?: boolean } = {},
 ): GraphPage {
-  db.exec(AFFINITY_SCHEMA);
-  const { offset = 0, limit = 25, linksShown = 3 } = page;
-  const where = list === "direct" ? "links > 0" : "links = 0 AND bridged > 0";
-  const order =
-    list === "direct" ? "links DESC, direct DESC, ar.name COLLATE NOCASE" : "bridged DESC, ar.name COLLATE NOCASE";
+  ensureAffinitySchema(db);
+  const { offset = 0, limit = 25, linksShown = 3, linkedOnly = false } = page;
+  const where = linkedOnly ? "links > 0" : "score > 0";
   const total = (
     db.prepare(`SELECT COUNT(*) AS n FROM affinity WHERE ${where} AND ${NOT_EXCLUDED}`).get() as { n: number }
   ).n;
   const rows = db
     .prepare(
-      `SELECT af.artist_id, af.direct, af.bridged FROM affinity af JOIN artists ar ON ar.id = af.artist_id
-       WHERE ${where} AND ${NOT_EXCLUDED} ORDER BY ${order} LIMIT ? OFFSET ?`,
+      `SELECT af.artist_id, af.score, af.bridged FROM affinity af JOIN artists ar ON ar.id = af.artist_id
+       WHERE ${where} AND ${NOT_EXCLUDED} ORDER BY af.score DESC, ar.name COLLATE NOCASE LIMIT ? OFFSET ?`,
     )
-    .all(limit, offset) as { artist_id: number; direct: number; bridged: number }[];
+    .all(limit, offset) as { artist_id: number; score: number; bridged: number }[];
 
   const row = (id: number) => getArtistRow(db, id)!;
   const seedLinks = db.prepare(
@@ -264,46 +303,45 @@ export function affinityPage(
      WHERE e.b = ? ORDER BY e.w DESC`,
   );
   const bridgeLinks = db.prepare(
-    `SELECT f.a AS id, a.direct * f.w AS w FROM edges_free f JOIN affinity a ON a.artist_id = f.a AND a.links > 0
+    `SELECT f.a AS id,
+            a.direct * (1 - exp(-f.w)) / sqrt((SELECT COUNT(*) FROM edges_free p WHERE p.a = f.a)) AS w
+     FROM edges_free f JOIN affinity a ON a.artist_id = f.a AND a.links > 0
      WHERE f.b = ? ORDER BY w DESC LIMIT ?`,
   );
 
   const candidates = rows.map((r): GraphCandidate => {
     const artist = row(r.artist_id);
-    if (list === "direct") {
-      const links = seedLinks.all(r.artist_id) as { id: number; w: number }[];
-      const direct = links.map((l) => ({ seed: row(l.id), weight: l.w, shows: [] as LinkShow[] }));
-      for (const link of direct.slice(0, linksShown)) link.shows = sharedShows(db, link.seed.id, artist.id);
-      return { artist, score: r.direct, direct, bridges: [] };
-    }
-    const bridges = (bridgeLinks.all(r.artist_id, linksShown) as { id: number; w: number }[]).map((b) => {
-      const strongest = seedLinks.get(b.id) as { id: number; w: number };
-      return { seed: row(strongest.id), bridge: row(b.id), weight: HOP_DAMPING * b.w };
-    });
-    return { artist, score: r.bridged, direct: [], bridges };
+    const links = seedLinks.all(r.artist_id) as { id: number; w: number }[];
+    const direct = links.map((l) => ({ seed: row(l.id), weight: l.w, shows: [] as LinkShow[] }));
+    for (const link of direct.slice(0, linksShown)) link.shows = sharedShows(db, link.seed.id, artist.id);
+    const bridges =
+      r.bridged > 0
+        ? (bridgeLinks.all(r.artist_id, linksShown) as { id: number; w: number }[]).map((b) => {
+            const strongest = seedLinks.get(b.id) as { id: number; w: number };
+            return { seed: row(strongest.id), bridge: row(b.id), weight: HOP_DAMPING * b.w };
+          })
+        : [];
+    return { artist, score: r.score, bridged: r.bridged, direct, bridges };
   });
   return { candidates, total };
 }
 
 /**
- * Rank artists for a set of seed artists (row ids): the first `limit` of each
- * list. Seeds never bridge or get recommended, since a link through one seed
- * is a direct link to it. Artists in `exclude` (bands you're not interested
- * in) are never recommended but can still bridge: they may be how two bands
- * you like connect.
+ * Rank artists for a set of seed artists (row ids): the first `limit`. Seeds
+ * never bridge or get recommended, since a link through one seed is a direct
+ * link to it. Artists in `exclude` (bands you're not interested in) are never
+ * recommended but can still bridge: they may be how two bands you like
+ * connect.
  */
 export function recommendFromGraph(
   db: Db,
   seedIds: number[],
   limit = 25,
   exclude: ReadonlySet<number> = new Set(),
-): GraphResult {
-  rebuildAffinity(db, seedIds, exclude);
-  const page = { limit, linksShown: Number.MAX_SAFE_INTEGER };
-  return {
-    direct: affinityPage(db, "direct", page).candidates,
-    oneStep: affinityPage(db, "oneStep", page).candidates,
-  };
+  today?: string,
+): GraphCandidate[] {
+  rebuildAffinity(db, seedIds, exclude, today);
+  return affinityPage(db, { limit, linksShown: Number.MAX_SAFE_INTEGER }).candidates;
 }
 
 /** e.g. "Opening for PUP on 6 dates, 4 of them upcoming". */

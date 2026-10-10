@@ -43,6 +43,8 @@ function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
   const band = { name: c.artist.name, mbid: c.artist.mbid, jambaseId: c.artist.jambase_id, caSlug: c.artist.ca_slug };
   const name = c.artist.url ? <a href={c.artist.url}>{c.artist.name}</a> : c.artist.name;
   const shows = c.direct.flatMap((d) => d.shows);
+  // Explain through other acts when that's most of why the band is here.
+  const showBridges = c.bridges.length > 0 && (c.direct.length === 0 || c.bridged > c.score / 2);
   return (
     <li className="card">
       <div className="card-title">{name}</div>
@@ -54,7 +56,7 @@ function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
       {c.direct.length > MAX_LINKS_LISTED && (
         <div className="why meta">and with {c.direct.length - MAX_LINKS_LISTED} more of your bands</div>
       )}
-      {c.direct.length === 0 &&
+      {showBridges &&
         c.bridges.slice(0, MAX_BRIDGES_LISTED).map((b) => (
           <div key={`${b.seed.id}-${b.bridge.id}`} className="why">
             {describeBridge(b)}
@@ -68,7 +70,7 @@ function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
           {shows.length > MAX_SHOWS_LISTED && <li>and {shows.length - MAX_SHOWS_LISTED} more</li>}
         </ul>
       )}
-      {c.direct.length === 0 && c.bridges.length > MAX_BRIDGES_LISTED && (
+      {showBridges && c.bridges.length > MAX_BRIDGES_LISTED && (
         <p className="meta">and {c.bridges.length - MAX_BRIDGES_LISTED} more links like these</p>
       )}
       <PrefButtons band={band} current={null} />
@@ -76,26 +78,11 @@ function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
   );
 }
 
-/** Previous / next links for one list, keeping the other list's page. */
-function Pager({
-  page,
-  index,
-  param,
-  other,
-}: {
-  page: GraphPage;
-  index: number;
-  param: "page" | "further";
-  other: Record<string, number>;
-}) {
+/** Previous / next links. */
+function Pager({ page, index }: { page: GraphPage; index: number }) {
   const pages = Math.ceil(page.total / PAGE_SIZE);
   if (pages <= 1) return null;
-  const href = (i: number) => {
-    const q = new URLSearchParams();
-    for (const [k, v] of Object.entries({ ...other, [param]: i })) if (v > 0) q.set(k, String(v + 1));
-    const qs = q.toString();
-    return `/bands${qs ? `?${qs}` : ""}`;
-  };
+  const href = (i: number) => (i > 0 ? `/bands?page=${i + 1}` : "/bands");
   return (
     <p className="pager meta">
       {index > 0 ? <Link href={href(index - 1)}>← Previous</Link> : <span />}
@@ -110,16 +97,10 @@ function Pager({
 export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
   await connection(); // reads the database on every request, never at build time
   const params = await searchParams;
-  const directIndex = pageParam(params.page);
-  const furtherIndex = pageParam(params.further);
-  const outcome = await recommendForProfile(getDb(), new Date(), {
-    direct: directIndex,
-    oneStep: furtherIndex,
-    size: PAGE_SIZE,
-  });
+  const index = pageParam(params.page);
+  const outcome = await recommendForProfile(getDb(), new Date(), { page: index, size: PAGE_SIZE });
   if (outcome.liked === 0) redirect("/");
-  const { direct, oneStep, today, noKey, budget } = outcome;
-  const pagers = { page: directIndex, further: furtherIndex };
+  const { results, today, noKey, budget } = outcome;
   const notes = refreshNotes(outcome);
   const names = outcome.liked === 1 ? "the band you like" : `the ${outcome.liked} bands you like`;
 
@@ -145,7 +126,7 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
         </ul>
       )}
 
-      {direct.total === 0 && oneStep.total === 0 && (
+      {results.total === 0 && (
         <>
           <p className="notice">
             Nothing to go on yet: no shared bills are on record for {names}. Bands announce tours
@@ -157,38 +138,20 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
         </>
       )}
 
-      {direct.total > 0 && (
+      {results.total > 0 && (
         <>
-          <h2 className="section-title">Sharing bills with your bands</h2>
-          <ol className="list" start={directIndex * PAGE_SIZE + 1}>
-            {direct.candidates.map((c) => (
+          <ol className="list" start={index * PAGE_SIZE + 1}>
+            {results.candidates.map((c) => (
               <Candidate key={c.artist.id} c={c} today={today} />
             ))}
           </ol>
-          <Pager page={direct} index={directIndex} param="page" other={pagers} />
-        </>
-      )}
-
-      {oneStep.total > 0 && (
-        <>
-          <h2 className="section-title">One step further</h2>
-          <p className="meta" style={{ marginBottom: "0.75rem" }}>
-            Sharing bills, on other dates, with the acts your bands play with.
+          <Pager page={results} index={index} />
+          <p className="meta" style={{ marginTop: "1.5rem" }}>
+            Ranked by how many of your bands they share bills with, directly or through the acts
+            your bands play with. Upcoming dates count a little more than past ones. From upcoming
+            concerts on JamBase plus any history stored locally. Festivals are left out.
           </p>
-          <ol className="list" start={furtherIndex * PAGE_SIZE + 1}>
-            {oneStep.candidates.map((c) => (
-              <Candidate key={c.artist.id} c={c} today={today} />
-            ))}
-          </ol>
-          <Pager page={oneStep} index={furtherIndex} param="further" other={pagers} />
         </>
-      )}
-
-      {(direct.total > 0 || oneStep.total > 0) && (
-        <p className="meta" style={{ marginTop: "1.5rem" }}>
-          From upcoming concerts on JamBase plus any history stored locally. Festivals are left
-          out.
-        </p>
       )}
       <p className="meta" style={{ marginTop: "0.5rem" }}>
         {outcome.waiting > 0 &&

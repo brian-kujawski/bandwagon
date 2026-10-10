@@ -2,7 +2,7 @@
  * Poke at the local co-bill store (data/bandwagon.db, or BANDWAGON_DB).
  *
  *   node scripts/graph.mts links "PUP" ["Another band" ...]
- *       Print direct and one-step-further recommendations for stored bands.
+ *       Print ranked recommendations for stored bands.
  *   node scripts/graph.mts stats
  *       Count what is stored.
  *
@@ -32,16 +32,13 @@ function links() {
   });
   const limit = Number(values.limit);
   const today = new Date().toISOString().slice(0, 10);
-  const { direct, oneStep } = recommendFromGraph(db, seedIds, limit);
+  const results = recommendFromGraph(db, seedIds, limit, new Set(), today);
 
-  console.log(`\nSharing bills (${direct.length}):`);
-  for (const c of direct) {
-    console.log(`  ${c.score.toFixed(2).padStart(6)}  ${c.artist.name}`);
+  console.log(`\nRecommended (${results.length}), score = direct + one step further:`);
+  for (const c of results) {
+    const parts = `${(c.score - c.bridged).toFixed(2)} + ${c.bridged.toFixed(2)}`;
+    console.log(`  ${c.score.toFixed(2).padStart(6)}  ${c.artist.name}  (${parts})`);
     for (const d of c.direct) console.log(`          ${describeDirect(d, today)}`);
-  }
-  console.log(`\nOne step further (${oneStep.length}):`);
-  for (const c of oneStep) {
-    console.log(`  ${c.score.toFixed(2).padStart(6)}  ${c.artist.name}`);
     for (const b of c.bridges.slice(0, 3)) console.log(`          ${describeBridge(b)}`);
   }
 }

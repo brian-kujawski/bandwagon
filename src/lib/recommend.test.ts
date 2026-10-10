@@ -58,8 +58,8 @@ describe("recommendForProfile", () => {
     expect(first.refreshed).toHaveLength(2);
     expect(first.waiting).toBe(1);
     expect(callsThisMonth(db, "jambase", NOW)).toBe(2);
-    expect(first.direct.candidates.map((c) => c.artist.name)).toEqual(["Zulu"]);
-    expect(first.direct.candidates[0].direct).toHaveLength(2);
+    expect(first.results.candidates.map((c) => c.artist.name)).toEqual(["Zulu"]);
+    expect(first.results.candidates[0].direct).toHaveLength(2);
 
     const second = await recommendForProfile(db, NOW);
     expect(second.refreshed).toHaveLength(1);
@@ -91,8 +91,8 @@ describe("recommendForProfile", () => {
     });
 
     const out = await recommendForProfile(db, NOW);
-    expect(out.direct).toEqual({ candidates: [], total: 0 });
-    expect(out.oneStep.candidates.map((c) => c.artist.name)).toEqual(["Charlie"]);
+    expect(out.results.candidates.map((c) => c.artist.name)).toEqual(["Charlie"]);
+    expect(out.results.candidates[0].direct).toEqual([]);
   });
 
   it("doesn't look a band up again for a month when JamBase doesn't have it", async () => {
@@ -126,9 +126,9 @@ describe("pages", () => {
     ingestJamBase(db, events as JbEvent[], { name: "Alpha", mbid: id, jambaseId: "jambase:1" });
 
     const first = await recommendForProfile(db, NOW, { size: 3 });
-    expect(first.direct.total).toBe(7);
-    expect(first.direct.candidates.map((c) => c.artist.name)).toEqual(["Act 6", "Act 5", "Act 4"]);
-    const last = await recommendForProfile(db, NOW, { size: 3, direct: 2 });
-    expect(last.direct.candidates.map((c) => c.artist.name)).toEqual(["Act 0"]);
+    expect(first.results.total).toBe(7);
+    expect(first.results.candidates.map((c) => c.artist.name)).toEqual(["Act 6", "Act 5", "Act 4"]);
+    const last = await recommendForProfile(db, NOW, { size: 3, page: 2 });
+    expect(last.results.candidates.map((c) => c.artist.name)).toEqual(["Act 0"]);
   });
 });
