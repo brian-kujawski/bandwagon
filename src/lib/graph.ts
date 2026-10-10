@@ -31,6 +31,19 @@ export const HOP_DAMPING = 0.5;
 /** A shared date that hasn't happened yet counts this much more than a past one. */
 export const UPCOMING_BOOST = 1.25;
 
+/**
+ * Raw score at which the 1-100 match reaches about 49. A single upcoming
+ * co-bill with one of your bands is about 38, three strong links about 76,
+ * five about 91.
+ */
+export const MATCH_SCALE = 1.5;
+
+/** A raw score on a 1-100 scale for display: saturating, so 100 means links to many of your bands. */
+export function matchScore(score: number): number {
+  if (!(score > 0)) return 1;
+  return Math.min(100, Math.max(1, Math.round(100 * (1 - Math.exp(-score / MATCH_SCALE)))));
+}
+
 /** Bump when the scoring changes, so stored scores are redone. */
 const SCORING_VERSION = 2;
 

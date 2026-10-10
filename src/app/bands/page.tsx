@@ -3,7 +3,15 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { PrefButtons } from "../pref-buttons";
 import { getDb } from "@/lib/db";
-import { describeBridge, describeDirect, type GraphCandidate, type GraphPage, type LinkShow } from "@/lib/graph";
+import type { CSSProperties } from "react";
+import {
+  describeBridge,
+  describeDirect,
+  matchScore,
+  type GraphCandidate,
+  type GraphPage,
+  type LinkShow,
+} from "@/lib/graph";
 import { recommendForProfile, type ProfileOutcome } from "@/lib/recommend";
 
 const MAX_SHOWS_LISTED = 3;
@@ -39,15 +47,25 @@ function refreshNotes(o: ProfileOutcome): string[] {
   );
 }
 
+/** Amber (hue 35) for a weak match up to green (hue 140) for a strong one. */
+const matchHue = (match: number) => Math.round(35 + ((match - 1) / 99) * 105);
+
 function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
+  const match = matchScore(c.score);
+  const hue = { "--match-hue": matchHue(match) } as CSSProperties;
   const band = { name: c.artist.name, mbid: c.artist.mbid, jambaseId: c.artist.jambase_id, caSlug: c.artist.ca_slug };
   const name = c.artist.url ? <a href={c.artist.url}>{c.artist.name}</a> : c.artist.name;
   const shows = c.direct.flatMap((d) => d.shows);
   // Explain through other acts when that's most of why the band is here.
   const showBridges = c.bridges.length > 0 && (c.direct.length === 0 || c.bridged > c.score / 2);
   return (
-    <li className="card">
-      <div className="card-title">{name}</div>
+    <li className="card match-card" style={hue}>
+      <div className="card-head">
+        <div className="card-title">{name}</div>
+        <span className="match" title={`Match ${match} of 100`} aria-label={`Match ${match} of 100`}>
+          {match}
+        </span>
+      </div>
       {c.direct.slice(0, MAX_LINKS_LISTED).map((d) => (
         <div key={d.seed.id} className="why">
           {describeDirect(d, today)}
@@ -148,7 +166,8 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
           <Pager page={results} index={index} />
           <p className="meta" style={{ marginTop: "1.5rem" }}>
             Ranked by how many of your bands they share bills with, directly or through the acts
-            your bands play with. Upcoming dates count a little more than past ones. From upcoming
+            your bands play with. The match number runs from 1 to 100: green means links to many
+            of your bands, amber a single distant link. Upcoming dates count a little more than past ones. From upcoming
             concerts on JamBase plus any history stored locally. Festivals are left out.
           </p>
         </>

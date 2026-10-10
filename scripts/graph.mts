@@ -12,7 +12,7 @@
 import { parseArgs } from "node:util";
 import { normName } from "../src/lib/concertArchives.ts";
 import { DEFAULT_DB_FILE, openDb } from "../src/lib/db.ts";
-import { describeBridge, describeDirect, recommendFromGraph } from "../src/lib/graph.ts";
+import { describeBridge, describeDirect, matchScore, recommendFromGraph } from "../src/lib/graph.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -34,10 +34,10 @@ function links() {
   const today = new Date().toISOString().slice(0, 10);
   const results = recommendFromGraph(db, seedIds, limit, new Set(), today);
 
-  console.log(`\nRecommended (${results.length}), score = direct + one step further:`);
+  console.log(`\nRecommended (${results.length}), match 1-100, raw score = direct + one step further:`);
   for (const c of results) {
     const parts = `${(c.score - c.bridged).toFixed(2)} + ${c.bridged.toFixed(2)}`;
-    console.log(`  ${c.score.toFixed(2).padStart(6)}  ${c.artist.name}  (${parts})`);
+    console.log(`  ${String(matchScore(c.score)).padStart(3)}  ${c.artist.name}  (${c.score.toFixed(2)} = ${parts})`);
     for (const d of c.direct) console.log(`          ${describeDirect(d, today)}`);
     for (const b of c.bridges.slice(0, 3)) console.log(`          ${describeBridge(b)}`);
   }

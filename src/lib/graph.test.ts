@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CaSummary } from "./concertArchives";
 import { getArtistRow, openDb, upsertArtist, type Db } from "./db";
-import { describeBridge, describeDirect, HOP_DAMPING, recommendFromGraph as recommend, UPCOMING_BOOST } from "./graph";
+import {
+  describeBridge,
+  describeDirect,
+  HOP_DAMPING,
+  matchScore,
+  recommendFromGraph as recommend,
+  UPCOMING_BOOST,
+} from "./graph";
 import { ingestConcertArchives, ingestJamBase } from "./ingest";
 import type { JbEvent, JbPerformer } from "./jambase";
 
@@ -175,6 +182,20 @@ describe("recommendFromGraph", () => {
     const ranked = recommendFromGraph(db, [a, x]);
     expect(names(ranked)).toEqual(["Bravo"]);
     expect(ranked[0].bridges).toEqual([]);
+  });
+});
+
+describe("matchScore", () => {
+  it("maps raw scores onto 1-100, saturating for many strong links", () => {
+    expect(matchScore(0)).toBe(1);
+    expect(matchScore(0.001)).toBe(1);
+    const oneUpcoming = matchScore(s(UP)); // one small upcoming bill with one of your bands
+    const farOff = matchScore((HOP_DAMPING * s(UP) * s(UP)) / Math.sqrt(10)); // one 2-hop link via a busy act
+    expect(farOff).toBeLessThan(10);
+    expect(oneUpcoming).toBeGreaterThan(30);
+    expect(oneUpcoming).toBeLessThan(50);
+    expect(matchScore(5 * s(2 * UP))).toBeGreaterThan(90);
+    expect(matchScore(100)).toBe(100);
   });
 });
 
