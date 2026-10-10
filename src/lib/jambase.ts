@@ -27,6 +27,7 @@ export type JbEvent = {
       addressRegion?: { alternateName?: string; name?: string };
       addressCountry?: { identifier?: string; name?: string };
     };
+    geo?: { latitude?: number; longitude?: number };
   };
   performer?: JbPerformer[];
 };

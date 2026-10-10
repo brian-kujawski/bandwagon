@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS events (
   venue TEXT,
   city TEXT,
   url TEXT,
+  lat REAL,                        -- venue coordinates, when the source gives them
+  lon REAL,
   cancelled INTEGER NOT NULL DEFAULT 0,
   seen_at TEXT NOT NULL,
   UNIQUE (source, source_id)
@@ -88,6 +90,10 @@ export function openDb(file: string = DEFAULT_DB_FILE): Db {
   db.exec("PRAGMA foreign_keys = ON");
   if (file !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
   db.exec(SCHEMA);
+  // Databases from before venue coordinates were stored. JamBase shows pick
+  // them up on their next refresh.
+  const cols = db.prepare("SELECT name FROM pragma_table_info('events')").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "lat")) db.exec("ALTER TABLE events ADD COLUMN lat REAL; ALTER TABLE events ADD COLUMN lon REAL;");
   return db;
 }
 
@@ -234,6 +240,9 @@ export type EventInput = {
   venue: string;
   city: string;
   url: string | null;
+  /** Venue coordinates, when the source gives them. */
+  lat?: number | null;
+  lon?: number | null;
   cancelled: boolean;
   acts: { artistId: number; headliner: boolean | null; billingRank: number | null }[];
 };
@@ -245,14 +254,15 @@ export type EventInput = {
 export function saveEvent(db: Db, e: EventInput, seenAt: string): number {
   const row = db
     .prepare(
-      `INSERT INTO events (source, source_id, date, venue, city, url, cancelled, seen_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO events (source, source_id, date, venue, city, url, lat, lon, cancelled, seen_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (source, source_id) DO UPDATE SET
-         date = excluded.date, venue = excluded.venue, city = excluded.city,
-         url = excluded.url, cancelled = excluded.cancelled, seen_at = excluded.seen_at
+         date = excluded.date, venue = excluded.venue, city = excluded.city, url = excluded.url,
+         lat = COALESCE(excluded.lat, lat), lon = COALESCE(excluded.lon, lon),
+         cancelled = excluded.cancelled, seen_at = excluded.seen_at
        RETURNING id`,
     )
-    .get(e.source, e.sourceId, e.date, e.venue, e.city, e.url, e.cancelled ? 1 : 0, seenAt) as {
+    .get(e.source, e.sourceId, e.date, e.venue, e.city, e.url, e.lat ?? null, e.lon ?? null, e.cancelled ? 1 : 0, seenAt) as {
     id: number;
   };
   db.prepare("DELETE FROM appearances WHERE event_id = ?").run(row.id);
