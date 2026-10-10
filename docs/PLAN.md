@@ -135,6 +135,7 @@ Built so far:
 - **Several bands in.** Pick up to 10 bands; candidates are ranked by how many of your bands they connect to, then by link strength. An artist who tours with three of your favourites outranks one who tours with one of them many times.
 - **Our own database.** A local SQLite file with `artists`, `events` and `appearances` (who played which event, headliner flag, billing order). Every source writes to the same tables, so JamBase upcoming shows and Concert Archives history link up (by artist name where there is no shared ID). A `cobills` view gives one weighted edge per pair of acts per shared date.
 - **Two hops.** If A plays with B next month and B plays with C on another date, C is suggested too. Since 2026-10-10 both kinds of link add into one score and one list, with upcoming dates counting 1.25 times past ones. To have B's other dates, the app also looks up the top five acts linked to your bands (one JamBase call each, re-checked monthly).
+- **Shows near you.** Cards list a suggested band's upcoming dates within 100 miles of Detroit, and since 2026-10-10 the app pulls every upcoming concert in that radius from JamBase monthly (up to 150 calls a month), so local dates show up for bands never looked up one by one. The pull checks its first page to confirm JamBase applied the area filter, which is still unconfirmed live.
 - **Data constraint**: JamBase's storage terms are still unchecked, so the database stays local and non-commercial until they are.
 
 ### The band web: clusters and bridges (next)

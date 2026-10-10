@@ -156,3 +156,41 @@ const byIdCache = new TtlCache<JbEvent[]>(DAY_MS);
 export async function getEventsByJamBaseId(jambaseId: string, onCall?: OnCall): Promise<JbEvent[]> {
   return byIdCache.getOrLoad(jambaseId, () => eventsFor(jambaseId, onCall));
 }
+
+/** Paging info JamBase returns with list results. */
+export type JbPagination = { page?: number; perPage?: number; totalItems?: number; totalPages?: number };
+
+export type AreaQuery = {
+  lat: number;
+  lon: number;
+  radiusMiles: number;
+  /** First date, YYYY-MM-DD. */
+  from: string;
+  page: number;
+};
+
+/**
+ * One page (up to 100) of the upcoming concerts within a radius of a point,
+ * one call. The geo parameters are from JamBase's spec and not yet confirmed
+ * live, so callers check the venues that come back (see metro.ts).
+ */
+export async function getEventsNear(
+  q: AreaQuery,
+  onCall?: OnCall,
+): Promise<{ events: JbEvent[]; pagination: JbPagination }> {
+  const data = await jbFetch<{ events?: JbEvent[]; pagination?: JbPagination }>(
+    "/events",
+    {
+      geoLatitude: String(q.lat),
+      geoLongitude: String(q.lon),
+      geoRadiusAmount: String(Math.round(q.radiusMiles)),
+      geoRadiusUnits: "mi",
+      eventType: "concerts",
+      eventDateFrom: q.from,
+      perPage: "100",
+      page: String(q.page),
+    },
+    onCall,
+  );
+  return { events: data.events ?? [], pagination: data.pagination ?? {} };
+}

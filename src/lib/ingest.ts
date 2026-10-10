@@ -5,7 +5,7 @@
 import { findSeedId, isCancelled, place, uniquePerformers } from "./cobills.ts";
 import { normName, type CaSummary } from "./concertArchives.ts";
 import { recordFetch, saveEvent, transaction, upsertArtist, type Db } from "./db.ts";
-import type { JbEvent } from "./jambase.ts";
+import type { JbEvent, JbPerformer } from "./jambase.ts";
 
 export type IngestCounts = { concerts: number; festivalsSkipped: number; withOthers: number };
 
@@ -34,36 +34,72 @@ export function ingestJamBase(
         if (e["@type"] === "Festival") counts.festivalsSkipped += 1;
         continue;
       }
-      const performers = uniquePerformers(e);
-      const acts = performers.map((p) => ({
-        artistId:
-          p.identifier === seedJambaseId
-            ? artistId
-            : upsertArtist(db, { name: p.name, jambaseId: p.identifier, url: p.url }),
-        headliner: typeof p["x-isHeadliner"] === "boolean" ? p["x-isHeadliner"] : null,
-        billingRank: p["x-performanceRank"] ?? null,
-      }));
-      const cancelled = isCancelled(e);
-      if (!cancelled) {
-        counts.concerts += 1;
-        if (acts.length > 1) counts.withOthers += 1;
-      }
-      saveEvent(
-        db,
-        {
-          source: "jambase",
-          sourceId: e.identifier,
-          date: e.startDate?.slice(0, 10) ?? null,
-          ...place(e),
-          url: e.url ?? null,
-          cancelled,
-          acts,
-        },
-        at,
-      );
+      const stored = saveJamBaseConcert(db, e, at, (p) => (p.identifier === seedJambaseId ? artistId : null));
+      if (stored.cancelled) continue;
+      counts.concerts += 1;
+      if (stored.acts > 1) counts.withOthers += 1;
     }
     recordFetch(db, artistId, "jambase", at);
     return { artistId, counts };
+  });
+}
+
+/**
+ * Store one JamBase concert and its bill. `known` maps a performer to an
+ * artist row the caller already has; everyone else is matched or added.
+ */
+function saveJamBaseConcert(
+  db: Db,
+  e: JbEvent,
+  at: string,
+  known: (p: JbPerformer) => number | null = () => null,
+): { cancelled: boolean; acts: number } {
+  const acts = uniquePerformers(e).map((p) => ({
+    artistId: known(p) ?? upsertArtist(db, { name: p.name, jambaseId: p.identifier, url: p.url }),
+    headliner: typeof p["x-isHeadliner"] === "boolean" ? p["x-isHeadliner"] : null,
+    billingRank: p["x-performanceRank"] ?? null,
+  }));
+  const cancelled = isCancelled(e);
+  saveEvent(
+    db,
+    {
+      source: "jambase",
+      sourceId: e.identifier,
+      date: e.startDate?.slice(0, 10) ?? null,
+      ...place(e),
+      url: e.url ?? null,
+      cancelled,
+      acts,
+    },
+    at,
+  );
+  return { cancelled, acts: acts.length };
+}
+
+/**
+ * Store JamBase concerts that came from an area search rather than one
+ * artist's list (see metro.ts). Every concert is kept, including ones with a
+ * single act: they add no link, but they tell a card its band is playing
+ * near you. Festivals are left out as everywhere else.
+ */
+export function ingestAreaEvents(
+  db: Db,
+  events: JbEvent[],
+  at: string = new Date().toISOString(),
+): IngestCounts {
+  return transaction(db, () => {
+    const counts: IngestCounts = { concerts: 0, festivalsSkipped: 0, withOthers: 0 };
+    for (const e of events) {
+      if (e["@type"] !== "Concert") {
+        if (e["@type"] === "Festival") counts.festivalsSkipped += 1;
+        continue;
+      }
+      const stored = saveJamBaseConcert(db, e, at);
+      if (stored.cancelled) continue;
+      counts.concerts += 1;
+      if (stored.acts > 1) counts.withOthers += 1;
+    }
+    return counts;
   });
 }
 

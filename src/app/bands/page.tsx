@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { connection } from "next/server";
+import { after, connection } from "next/server";
 import { PrefButtons } from "../pref-buttons";
 import { getDb } from "@/lib/db";
 import type { CSSProperties } from "react";
@@ -11,7 +11,12 @@ import {
   type GraphPage,
 } from "@/lib/graph";
 import type { NearbyShow } from "@/lib/nearby";
-import { recommendForProfile, type ProfileCandidate, type ProfileOutcome } from "@/lib/recommend";
+import {
+  recommendForProfile,
+  refreshAreaIfDue,
+  type ProfileCandidate,
+  type ProfileOutcome,
+} from "@/lib/recommend";
 
 const MAX_NEARBY_LISTED = 3;
 const MAX_LINKS_LISTED = 3;
@@ -49,6 +54,28 @@ function refreshNotes(o: ProfileOutcome): string[] {
         ? [`JamBase didn't answer for ${name}; using stored shows only.`]
         : [],
   );
+}
+
+/** One line on the area pull: how many local concerts are stored, or why none are. */
+function areaNote({ area }: ProfileOutcome): string | null {
+  const { last, complete } = area;
+  if (!last) return null;
+  const pulled = complete ?? last;
+  const day = formatDate(pulled.updated_at.slice(0, 10));
+  const parts: string[] = [];
+  if (pulled.concerts > 0) {
+    parts.push(`${pulled.concerts.toLocaleString("en-US")} upcoming concerts near you on record (pulled ${day}).`);
+  }
+  if ((last.outcome === "partial" || last.outcome === "running") && last.next_page > 1) {
+    parts.push(
+      `The pull of local concerts is part done (page ${last.next_page - 1}${last.total_pages ? ` of ${last.total_pages}` : ""}) and carries on later.`,
+    );
+  } else if (last.outcome === "filter-ignored") {
+    parts.push("JamBase didn't narrow its concert search to your area, so local shows come only from bands' own lists for now.");
+  } else if (last.outcome === "error") {
+    parts.push("The last pull of local concerts failed; it will try again in a week.");
+  }
+  return parts.join(" ") || null;
 }
 
 /** Amber (hue 35) for a weak match up to green (hue 140) for a strong one. */
@@ -126,6 +153,8 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
   const index = pageParam(params.page);
   const outcome = await recommendForProfile(getDb(), new Date(), { page: index, size: PAGE_SIZE });
   if (outcome.liked === 0) redirect("/");
+  // Every upcoming concert around home, monthly, once the page is on its way.
+  after(() => refreshAreaIfDue(getDb()));
   const { results, today, noKey, budget } = outcome;
   const notes = refreshNotes(outcome);
   const names = outcome.liked === 1 ? "the band you like" : `the ${outcome.liked} bands you like`;
@@ -186,6 +215,7 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
           `${outcome.waiting} of your bands are due a JamBase check; a few get one each visit. `}
         JamBase calls this month: {budget.used} of {budget.limit}.
       </p>
+      {areaNote(outcome) && <p className="meta">{areaNote(outcome)}</p>}
     </>
   );
 }
