@@ -113,6 +113,26 @@ describe("recommendForProfile", () => {
   });
 });
 
+describe("nearby shows", () => {
+  it("lists a suggestion's upcoming shows near Detroit", async () => {
+    vi.stubEnv("JAMBASE_API_KEY", "");
+    const id = mbid();
+    setPref(db, { name: "Alpha", mbid: id }, "liked");
+    const at = (latitude: number, longitude: number) => ({ name: "Venue", geo: { latitude, longitude } });
+    ingestJamBase(
+      db,
+      [
+        { ...concert("2026-11-01", ["1", "Alpha"], ["9", "Zulu"]), location: at(41.88, -87.63) }, // Chicago
+        { ...concert("2026-11-02", ["1", "Alpha"], ["9", "Zulu"]), location: at(42.34, -83.05) }, // Detroit
+      ] as JbEvent[],
+      { name: "Alpha", mbid: id, jambaseId: "jambase:1" },
+    );
+    const out = await recommendForProfile(db, NOW);
+    expect(out.results.candidates[0].artist.name).toBe("Zulu");
+    expect(out.results.candidates[0].nearby.map((s) => s.date)).toEqual(["2026-11-02"]);
+  });
+});
+
 describe("pages", () => {
   it("serves a ranked list a page at a time", async () => {
     vi.stubEnv("JAMBASE_API_KEY", "");

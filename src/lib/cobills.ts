@@ -54,13 +54,21 @@ export function relationOf(seedHeadlines: boolean | null, otherHeadlines: boolea
   return "shares-bill";
 }
 
-export function place(e: JbEvent): { venue: string; city: string } {
+export function place(e: JbEvent): { venue: string; city: string; lat: number | null; lon: number | null } {
   const loc = e.location ?? {};
   const a = loc.address ?? {};
   const region = a.addressRegion?.alternateName || a.addressRegion?.name;
   const country = a.addressCountry?.identifier;
   const cityParts = [a.addressLocality, region || (country !== "US" ? country : undefined)];
-  return { venue: loc.name ?? "", city: cityParts.filter(Boolean).join(", ") };
+  const coord = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const lat = coord(loc.geo?.latitude);
+  const lon = coord(loc.geo?.longitude);
+  return {
+    venue: loc.name ?? "",
+    city: cityParts.filter(Boolean).join(", "),
+    lat: lat !== null && lon !== null ? lat : null,
+    lon: lat !== null && lon !== null ? lon : null,
+  };
 }
 
 export function mostCommon(relations: Relation[]): Relation {

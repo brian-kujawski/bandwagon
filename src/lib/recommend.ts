@@ -1,8 +1,9 @@
 import { callsThisMonth, monthlyBudget, recordCalls, remainingCalls } from "./budget";
 import { getArtistRow, getDb, lastFetched, recordFetch, transaction, type Db } from "./db";
-import { affinityPage, rebuildAffinity, type GraphPage } from "./graph";
+import { affinityPage, rebuildAffinity, type GraphCandidate } from "./graph";
 import { ingestJamBase, type IngestCounts } from "./ingest";
 import { getEventsByJamBaseId, getUpcomingEvents, MissingJamBaseKeyError } from "./jambase";
+import { homeFromEnv, nearbyShows, type NearbyShow } from "./nearby";
 import { artistIdsFor, listPrefs, type BandPref } from "./prefs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -38,9 +39,14 @@ export type SeedStatus =
   /** JamBase failed; stored shows were used. */
   | { kind: "error" };
 
+export type ProfileCandidate = GraphCandidate & {
+  /** The artist's upcoming shows near home (BANDWAGON_HOME, default Detroit). */
+  nearby: NearbyShow[];
+};
+
 export type ProfileOutcome = {
   /** The requested page of the ranked list. */
-  results: GraphPage;
+  results: { candidates: ProfileCandidate[]; total: number };
   today: string;
   /** How many bands you like. */
   liked: number;
@@ -160,8 +166,13 @@ export async function recommendForProfile(
   const today = isoDay(now);
   rebuildAffinity(db, seedIds, exclude, today);
   const size = pages.size ?? 25;
+  const page = affinityPage(db, { offset: (pages.page ?? 0) * size, limit: size });
+  const home = homeFromEnv();
   return {
-    results: affinityPage(db, { offset: (pages.page ?? 0) * size, limit: size }),
+    results: {
+      total: page.total,
+      candidates: page.candidates.map((c) => ({ ...c, nearby: nearbyShows(db, c.artist.id, today, home) })),
+    },
     today,
     liked: likedPrefs.length,
     refreshed,

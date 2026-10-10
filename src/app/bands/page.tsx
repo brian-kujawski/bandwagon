@@ -8,13 +8,12 @@ import {
   describeBridge,
   describeDirect,
   matchScore,
-  type GraphCandidate,
   type GraphPage,
-  type LinkShow,
 } from "@/lib/graph";
-import { recommendForProfile, type ProfileOutcome } from "@/lib/recommend";
+import type { NearbyShow } from "@/lib/nearby";
+import { recommendForProfile, type ProfileCandidate, type ProfileOutcome } from "@/lib/recommend";
 
-const MAX_SHOWS_LISTED = 3;
+const MAX_NEARBY_LISTED = 3;
 const MAX_LINKS_LISTED = 3;
 const MAX_BRIDGES_LISTED = 2;
 const PAGE_SIZE = 25;
@@ -32,9 +31,14 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-function ShowLine({ show }: { show: LinkShow }) {
+function NearbyLine({ show }: { show: NearbyShow }) {
   const text = `${formatDate(show.date)} · ${[show.venue, show.city].filter(Boolean).join(", ")}`;
-  return <li>{show.url ? <a href={show.url}>{text}</a> : text}</li>;
+  return (
+    <li>
+      {show.url ? <a href={show.url}>{text}</a> : text}
+      <span className="meta"> · {Math.max(1, Math.round(show.miles))} mi</span>
+    </li>
+  );
 }
 
 function refreshNotes(o: ProfileOutcome): string[] {
@@ -50,12 +54,11 @@ function refreshNotes(o: ProfileOutcome): string[] {
 /** Amber (hue 35) for a weak match up to green (hue 140) for a strong one. */
 const matchHue = (match: number) => Math.round(35 + ((match - 1) / 99) * 105);
 
-function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
+function Candidate({ c, today }: { c: ProfileCandidate; today: string }) {
   const match = matchScore(c.score);
   const hue = { "--match-hue": matchHue(match) } as CSSProperties;
   const band = { name: c.artist.name, mbid: c.artist.mbid, jambaseId: c.artist.jambase_id, caSlug: c.artist.ca_slug };
   const name = c.artist.url ? <a href={c.artist.url}>{c.artist.name}</a> : c.artist.name;
-  const shows = c.direct.flatMap((d) => d.shows);
   // Explain through other acts when that's most of why the band is here.
   const showBridges = c.bridges.length > 0 && (c.direct.length === 0 || c.bridged > c.score / 2);
   return (
@@ -80,16 +83,21 @@ function Candidate({ c, today }: { c: GraphCandidate; today: string }) {
             {describeBridge(b)}
           </div>
         ))}
-      {shows.length > 0 && (
-        <ul className="shows">
-          {shows.slice(0, MAX_SHOWS_LISTED).map((s, i) => (
-            <ShowLine key={i} show={s} />
-          ))}
-          {shows.length > MAX_SHOWS_LISTED && <li>and {shows.length - MAX_SHOWS_LISTED} more</li>}
-        </ul>
-      )}
       {showBridges && c.bridges.length > MAX_BRIDGES_LISTED && (
         <p className="meta">and {c.bridges.length - MAX_BRIDGES_LISTED} more links like these</p>
+      )}
+      {c.nearby.length > 0 && (
+        <div className="nearby">
+          <div className="nearby-title">Playing near you</div>
+          <ul>
+            {c.nearby.slice(0, MAX_NEARBY_LISTED).map((s) => (
+              <NearbyLine key={s.date} show={s} />
+            ))}
+            {c.nearby.length > MAX_NEARBY_LISTED && (
+              <li className="meta">and {c.nearby.length - MAX_NEARBY_LISTED} more nearby</li>
+            )}
+          </ul>
+        </div>
       )}
       <PrefButtons band={band} current={null} />
     </li>
@@ -167,7 +175,8 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
           <p className="meta" style={{ marginTop: "1.5rem" }}>
             Ranked by how many of your bands they share bills with, directly or through the acts
             your bands play with. The match number runs from 1 to 100: green means links to many
-            of your bands, amber a single distant link. Upcoming dates count a little more than past ones. From upcoming
+            of your bands, amber a single distant link. Upcoming dates count a little more than past ones. Shows are listed only when they&apos;re
+            within reach of Detroit. From upcoming
             concerts on JamBase plus any history stored locally. Festivals are left out.
           </p>
         </>

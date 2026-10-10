@@ -169,11 +169,21 @@ a.card:hover {
   margin-top: 0.25rem;
 }
 
-.shows {
-  list-style: none;
-  margin-top: 0.5rem;
+.nearby {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.45rem;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
   font-size: 0.9rem;
-  color: var(--muted);
+}
+
+.nearby-title {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.nearby ul {
+  list-style: none;
 }
 
 .notice {

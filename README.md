@@ -14,6 +14,8 @@ Like the bands you love, as many as you want, and bandwagon recommends the artis
    - Both add into one score and one list, so an act two steps from all of your bands can rank above one that shared a single big bill with one of them.
    - Scores for every artist are stored and recomputed only when your bands or the stored shows change, and once a day as shows move from upcoming to past; results come 25 to a page. A synthetic graph of 100,000 artists, 300,000 shows and 10,000 liked bands took about 10 s to rescore after new shows, under 2 s after liking a band, and about 0.2 s per results page.
 
+5. **Near you.** Cards don't list every shared date, only the counts ("Opening for X on 8 upcoming dates"). When a suggested band has an upcoming show within 100 miles of downtown Detroit, the card lists it under "Playing near you" with a link to the JamBase event page. Distances use the venue coordinates JamBase gives. Change the area with `BANDWAGON_HOME` and `BANDWAGON_RADIUS_MILES`.
+
 Because everything lands in one database, Concert Archives history (from the vault, below) links up with JamBase shows by artist name, and every search makes the web a little bigger.
 
 ## Running it
