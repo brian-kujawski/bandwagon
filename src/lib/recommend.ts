@@ -1,116 +1,172 @@
-import { getDb, lastFetched, upsertArtist, type Db } from "./db";
-import { recommendFromGraph, type GraphResult } from "./graph";
+import { callsThisMonth, monthlyBudget, recordCalls, remainingCalls } from "./budget";
+import { getArtistRow, getDb, lastFetched, recordFetch, transaction, type Db } from "./db";
+import { affinityPage, rebuildAffinity, type GraphPage } from "./graph";
 import { ingestJamBase, type IngestCounts } from "./ingest";
 import { getEventsByJamBaseId, getUpcomingEvents, MissingJamBaseKeyError } from "./jambase";
-import type { ArtistCandidate } from "./musicbrainz";
+import { artistIdsFor, listPrefs, type BandPref } from "./prefs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Your own bands are re-checked daily, as before. */
-const SEED_REFRESH_MS = DAY_MS;
-/** Acts we pull in to widen the web are re-checked monthly (decided 2026-10-09). */
-const NEIGHBOUR_REFRESH_MS = 30 * DAY_MS;
+/** Liked bands and the acts we widen to are re-checked monthly (decided 2026-10-09). */
+const REFRESH_MS = 30 * DAY_MS;
+/** A lookup by MusicBrainz ID can take three calls: by ID, a name search, then events. */
+const MAX_CALLS_PER_LOOKUP = 3;
+
+const envCount = (name: string, fallback: number) => {
+  const n = Number(process.env[name] ?? fallback);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+};
+
+/**
+ * How many liked bands are looked up on JamBase per page load, oldest check
+ * first. Keeps a page quick however many bands you like; the rest wait for
+ * later visits (or, later on, the monthly refresh job).
+ */
+const refreshPerVisit = () => envCount("BANDWAGON_REFRESH_PER_VISIT", 5);
 
 /**
  * How many of the top directly linked acts to look up on JamBase so their own
  * co-bills feed the "one step further" list. Each costs one JamBase call per
  * month at most. Set BANDWAGON_EXPAND=0 to turn it off.
  */
-function expandCount(): number {
-  const n = Number(process.env.BANDWAGON_EXPAND ?? 5);
-  return Number.isFinite(n) && n >= 0 ? n : 5;
-}
+const expandCount = () => envCount("BANDWAGON_EXPAND", 5);
 
 export type SeedStatus =
   /** Fetched from JamBase just now. */
   | { kind: "fetched"; counts: IngestCounts }
-  /** Checked recently, so the stored shows were used. */
-  | { kind: "stored" }
-  /** JamBase has no artist matching this MusicBrainz artist. */
+  /** JamBase has no artist matching this band. */
   | { kind: "not-on-jambase" }
-  /** JamBase was not asked (no key) or failed; stored shows were used. */
-  | { kind: "unavailable"; reason: "no-key" | "error" };
+  /** JamBase failed; stored shows were used. */
+  | { kind: "error" };
 
-export type SeedReport = {
-  artist: ArtistCandidate;
-  artistId: number;
-  status: SeedStatus;
-  /** Co-billed concerts on record for this band, from every source. */
-  storedShows: number;
+export type ProfileOutcome = {
+  /** The requested page of each list. */
+  direct: GraphPage;
+  oneStep: GraphPage;
+  today: string;
+  /** How many bands you like. */
+  liked: number;
+  /** Bands looked up on JamBase during this visit. */
+  refreshed: { name: string; status: SeedStatus }[];
+  /** Liked bands whose shows are due a JamBase check and didn't get one this visit. */
+  waiting: number;
+  budget: { used: number; limit: number };
+  noKey: boolean;
 };
 
-export type MixOutcome = { seeds: SeedReport[]; graph: GraphResult; today: string };
+const isFresh = (at: string | null, now: Date) =>
+  at !== null && now.getTime() - Date.parse(at) < REFRESH_MS;
 
-const isFresh = (at: string | null, maxAgeMs: number, now: Date) =>
-  at !== null && now.getTime() - Date.parse(at) < maxAgeMs;
+type Seed = { pref: BandPref; artistId: number; checkedAt: string | null };
 
-async function refreshSeed(db: Db, artist: ArtistCandidate, now: Date): Promise<Omit<SeedReport, "storedShows">> {
-  let artistId = upsertArtist(db, { name: artist.name, mbid: artist.mbid });
-  if (isFresh(lastFetched(db, artistId, "jambase"), SEED_REFRESH_MS, now)) {
-    return { artist, artistId, status: { kind: "stored" } };
-  }
+async function refreshSeed(db: Db, seed: Seed, now: Date): Promise<SeedStatus> {
+  const { pref } = seed;
+  const at = now.toISOString();
+  let calls = 0;
+  const onCall = () => (calls += 1);
   try {
-    const upcoming = await getUpcomingEvents(artist.mbid, artist.name);
-    if (upcoming.path === "not-found") return { artist, artistId, status: { kind: "not-on-jambase" } };
-    const result = ingestJamBase(
-      db,
-      upcoming.events,
-      { name: artist.name, mbid: artist.mbid, jambaseId: upcoming.jambaseId },
-      now.toISOString(),
-    );
-    artistId = result.artistId;
-    return { artist, artistId, status: { kind: "fetched", counts: result.counts } };
-  } catch (e) {
-    if (!(e instanceof MissingJamBaseKeyError)) console.error(`[recommend] ${artist.name}:`, e);
-    const reason = e instanceof MissingJamBaseKeyError ? "no-key" : "error";
-    return { artist, artistId, status: { kind: "unavailable", reason } };
+    if (pref.mbid) {
+      const upcoming = await getUpcomingEvents(pref.mbid, pref.name, onCall);
+      if (upcoming.path === "not-found") {
+        recordFetch(db, seed.artistId, "jambase", at); // don't ask again until next month
+        return { kind: "not-on-jambase" };
+      }
+      const { counts } = ingestJamBase(
+        db,
+        upcoming.events,
+        { name: pref.name, mbid: pref.mbid, jambaseId: upcoming.jambaseId ?? pref.jambase_id },
+        at,
+      );
+      return { kind: "fetched", counts };
+    }
+    const events = await getEventsByJamBaseId(pref.jambase_id!, onCall);
+    const { counts } = ingestJamBase(db, events, { name: pref.name, jambaseId: pref.jambase_id }, at);
+    return { kind: "fetched", counts };
+  } finally {
+    recordCalls(db, "jambase", calls, now);
   }
 }
 
 /** Pull in the top directly linked acts' own shows, so 2-hop links have data. */
-async function widen(db: Db, seedIds: number[], now: Date): Promise<void> {
+async function widen(db: Db, seedIds: number[], exclude: Set<number>, now: Date): Promise<void> {
   const n = expandCount();
   if (n === 0) return;
-  for (const c of recommendFromGraph(db, seedIds, n).direct) {
+  rebuildAffinity(db, seedIds, exclude);
+  for (const c of affinityPage(db, "direct", { limit: n, linksShown: 0 }).candidates) {
     const id = c.artist.jambase_id;
-    if (!id || isFresh(lastFetched(db, c.artist.id, "jambase"), NEIGHBOUR_REFRESH_MS, now)) continue;
+    if (!id || isFresh(lastFetched(db, c.artist.id, "jambase"), now)) continue;
+    if (remainingCalls(db, "jambase", now) < 1) return;
+    let calls = 0;
     try {
-      const events = await getEventsByJamBaseId(id);
+      const events = await getEventsByJamBaseId(id, () => (calls += 1));
       ingestJamBase(db, events, { name: c.artist.name, jambaseId: id }, now.toISOString());
     } catch (e) {
       console.error(`[recommend] widening via ${c.artist.name}:`, e);
       return; // a key or quota problem will hit every call; stop here
+    } finally {
+      recordCalls(db, "jambase", calls, now);
     }
   }
 }
 
-function storedShows(db: Db, artistId: number): number {
-  const row = db
-    .prepare("SELECT COUNT(DISTINCT date) AS n FROM cobills WHERE a = ?")
-    .get(artistId) as { n: number };
-  return row.n;
-}
-
 /**
- * Recommendations for several bands at once. Each band's upcoming JamBase
- * shows go into the local store; recommendations then come from everything
- * stored, which includes past co-bills loaded from Concert Archives and the
- * shows of acts looked up for earlier searches.
+ * Recommendations from every band you like. A few liked bands whose shows are
+ * due a check get looked up on JamBase per visit, within the monthly call
+ * budget; everything else comes from what is stored, which includes past
+ * co-bills from Concert Archives. Bands you're not interested in are left
+ * out of the results.
  */
-export async function recommendForMany(
-  artists: ArtistCandidate[],
+export type PageRequest = { direct?: number; oneStep?: number; size?: number };
+
+export async function recommendForProfile(
   db: Db = getDb(),
   now: Date = new Date(),
-): Promise<MixOutcome> {
-  const reports: Omit<SeedReport, "storedShows">[] = [];
-  for (const artist of artists) reports.push(await refreshSeed(db, artist, now));
-  const seedIds = [...new Set(reports.map((r) => r.artistId))];
+  pages: PageRequest = {},
+): Promise<ProfileOutcome> {
+  const likedPrefs = listPrefs(db, "liked");
+  const { seeds, exclude } = transaction(db, () => {
+    const ids = artistIdsFor(db, likedPrefs);
+    const seeds: Seed[] = likedPrefs.map((pref, i) => ({
+      pref,
+      artistId: ids[i],
+      checkedAt: lastFetched(db, ids[i], "jambase"),
+    }));
+    return { seeds, exclude: new Set(artistIdsFor(db, listPrefs(db, "not_interested"))) };
+  });
+  // Saving one band can merge two artist rows, so drop ids that merged away.
+  const seedIds = [...new Set(seeds.map((s) => s.artistId))].filter((id) => getArtistRow(db, id));
 
-  const noKey = reports.some((r) => r.status.kind === "unavailable" && r.status.reason === "no-key");
-  if (!noKey) await widen(db, seedIds, now);
+  const due = seeds
+    .filter((s) => (s.pref.mbid || s.pref.jambase_id) && !isFresh(s.checkedAt, now))
+    .sort((a, b) => (a.checkedAt ?? "").localeCompare(b.checkedAt ?? ""));
 
+  const refreshed: ProfileOutcome["refreshed"] = [];
+  let noKey = false;
+  for (const seed of due.slice(0, refreshPerVisit())) {
+    if (remainingCalls(db, "jambase", now) < MAX_CALLS_PER_LOOKUP) break;
+    try {
+      refreshed.push({ name: seed.pref.name, status: await refreshSeed(db, seed, now) });
+    } catch (e) {
+      if (e instanceof MissingJamBaseKeyError) {
+        noKey = true;
+        break;
+      }
+      console.error(`[recommend] ${seed.pref.name}:`, e);
+      refreshed.push({ name: seed.pref.name, status: { kind: "error" } });
+    }
+  }
+  if (!noKey && seedIds.length > 0) await widen(db, seedIds, exclude, now);
+
+  rebuildAffinity(db, seedIds, exclude);
+  const size = pages.size ?? 25;
+  const page = (list: "direct" | "oneStep", n = 0) => affinityPage(db, list, { offset: n * size, limit: size });
   return {
-    seeds: reports.map((r) => ({ ...r, storedShows: storedShows(db, r.artistId) })),
-    graph: recommendFromGraph(db, seedIds),
+    direct: page("direct", pages.direct),
+    oneStep: page("oneStep", pages.oneStep),
     today: now.toISOString().slice(0, 10),
+    liked: likedPrefs.length,
+    refreshed,
+    waiting: due.length - refreshed.filter((r) => r.status.kind !== "error").length,
+    budget: { used: callsThisMonth(db, "jambase", now), limit: monthlyBudget("jambase") },
+    noKey,
   };
 }

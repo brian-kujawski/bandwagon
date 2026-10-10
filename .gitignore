@@ -45,3 +45,7 @@ next-env.d.ts
 
 # local scrape output (scripts/concert-archives.mts)
 /data/
+
+# data exports (scripts/data.mts); personal use only, keep out of git
+*.sqlite
+*.sqlite.tmp
