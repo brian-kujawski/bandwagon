@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CaSummary } from "./concertArchives";
 import { getArtistRow, openDb, upsertArtist, type Db } from "./db";
-import { describeBridge, describeDirect, recommendFromGraph } from "./graph";
+import {
+  describeBridge,
+  describeDirect,
+  HOP_DAMPING,
+  matchScore,
+  recommendFromGraph as recommend,
+  UPCOMING_BOOST,
+} from "./graph";
 import { ingestConcertArchives, ingestJamBase } from "./ingest";
 import type { JbEvent, JbPerformer } from "./jambase";
 
@@ -34,6 +41,12 @@ beforeEach(() => {
 
 const names = (cs: { artist: { name: string } }[]) => cs.map((c) => c.artist.name);
 
+const TODAY = "2026-10-09";
+const recommendFromGraph = (db: Db, seeds: number[]) => recommend(db, seeds, 25, new Set(), TODAY);
+/** What one link of summed weight w counts for. */
+const s = (w: number) => 1 - Math.exp(-w);
+const UP = UPCOMING_BOOST;
+
 describe("ingestJamBase", () => {
   it("stores concerts, skips festivals, and weights by bill size", () => {
     const { artistId, counts } = ingestJamBase(
@@ -49,26 +62,26 @@ describe("ingestJamBase", () => {
     expect(counts).toEqual({ concerts: 3, festivalsSkipped: 1, withOthers: 3 });
     expect(getArtistRow(db, artistId)).toMatchObject({ mbid: "mbid-a", jambase_id: "jambase:1" });
 
-    const { direct } = recommendFromGraph(db, [artistId]);
+    const direct = recommendFromGraph(db, [artistId]);
     expect(names(direct)).toEqual(["Bravo", "Charlie", "Delta", "X-Ray"]);
-    expect(direct[0].score).toBe(2);
-    expect(direct[1].score).toBeCloseTo(1 / 3);
+    expect(direct[0].score).toBeCloseTo(s(2 * UP));
+    expect(direct[1].score).toBeCloseTo(s(UP / 3));
     expect(describeDirect(direct[0].direct[0], "2026-10-09")).toBe("Opening for Alpha on 2 upcoming dates");
   });
 
   it("replaces a bill when an opener is added later", () => {
     const show = concert("2026-11-01", [A]);
     const { artistId } = ingestJamBase(db, [show], { name: "Alpha" });
-    expect(recommendFromGraph(db, [artistId]).direct).toEqual([]);
+    expect(recommendFromGraph(db, [artistId])).toEqual([]);
     ingestJamBase(db, [{ ...show, performer: [A, B] }], { name: "Alpha" });
-    expect(names(recommendFromGraph(db, [artistId]).direct)).toEqual(["Bravo"]);
+    expect(names(recommendFromGraph(db, [artistId]))).toEqual(["Bravo"]);
   });
 
   it("drops cancelled shows from the graph", () => {
     const { artistId } = ingestJamBase(db, [concert("2026-11-01", [A, B], { eventStatus: "cancelled" })], {
       name: "Alpha",
     });
-    expect(recommendFromGraph(db, [artistId]).direct).toEqual([]);
+    expect(recommendFromGraph(db, [artistId])).toEqual([]);
   });
 });
 
@@ -82,7 +95,7 @@ describe("recommendFromGraph", () => {
     ).artistId;
     const x = ingestJamBase(db, [concert("2026-12-01", [X, D])], { name: "X-Ray" }).artistId;
 
-    const { direct } = recommendFromGraph(db, [a, x]);
+    const direct = recommendFromGraph(db, [a, x]);
     expect(names(direct)).toEqual(["Delta", "Bravo"]);
     expect(direct[0].direct.map((d) => d.seed.name).sort()).toEqual(["Alpha", "X-Ray"]);
   });
@@ -95,11 +108,12 @@ describe("recommendFromGraph", () => {
       jambaseId: "jambase:2",
     });
 
-    const { direct, oneStep } = recommendFromGraph(db, [a]);
-    expect(names(direct)).toEqual(["Bravo"]);
-    expect(names(oneStep)).toEqual(["Charlie"]);
-    expect(oneStep[0].score).toBe(0.5);
-    expect(describeBridge(oneStep[0].bridges[0])).toBe("Shares bills with Bravo, who plays with Alpha");
+    const ranked = recommendFromGraph(db, [a]);
+    expect(names(ranked)).toEqual(["Bravo", "Charlie"]);
+    expect(ranked[1].score).toBeCloseTo(HOP_DAMPING * s(UP) * s(UP));
+    expect(ranked[1].bridged).toBe(ranked[1].score);
+    expect(ranked[1].direct).toEqual([]);
+    expect(describeBridge(ranked[1].bridges[0])).toBe("Shares bills with Bravo, who plays with Alpha");
   });
 
   it("spreads a busy act's credit thin one step out", () => {
@@ -114,18 +128,74 @@ describe("recommendFromGraph", () => {
       ),
       { name: "Hub", jambaseId: "jambase:50" },
     );
-    const { oneStep } = recommendFromGraph(db, [a]);
+    const oneStep = recommendFromGraph(db, [a]).filter((c) => c.direct.length === 0);
     expect(oneStep[0].artist.name).toBe("Charlie");
-    expect(oneStep[0].score).toBe(0.5);
-    expect(oneStep.find((c) => c.artist.name === "Delta")?.score).toBeCloseTo(0.05);
+    expect(oneStep[0].score).toBeCloseTo(HOP_DAMPING * s(UP) * s(UP));
+    expect(oneStep.find((c) => c.artist.name === "Delta")?.score).toBeCloseTo(
+      (HOP_DAMPING * s(UP) * s(UP)) / Math.sqrt(10),
+    );
+  });
+
+  it("counts upcoming dates a little more than past ones", () => {
+    const a = ingestJamBase(db, [concert("2026-11-01", [A, B]), concert("2025-11-01", [A, C])], {
+      name: "Alpha",
+    }).artistId;
+    const ranked = recommendFromGraph(db, [a]);
+    expect(names(ranked)).toEqual(["Bravo", "Charlie"]);
+    expect(ranked[0].score).toBeCloseTo(s(UP));
+    expect(ranked[1].score).toBeCloseTo(s(1));
+  });
+
+  it("ranks an act two steps from all your bands above one big bill with one of them", () => {
+    // Wide plays with a tourmate of each of your four bands. Big shares one ten-act bill with Alpha.
+    const seeds = [A, X, act("11", "Yankee", true), act("12", "Zulu", true)];
+    const W = act("20", "Wide");
+    const big = act("21", "Big");
+    const filler = Array.from({ length: 7 }, (_, i) => act(`3${i}`, `Filler ${i}`));
+    const ids = seeds.map((seed, i) => {
+      const mate = act(`4${i}`, `Mate ${i}`);
+      const shows = [concert(`2026-11-0${i + 1}`, [seed, mate])];
+      if (i === 0) shows.push(concert("2026-11-20", [seed, big, ...filler]));
+      const id = ingestJamBase(db, shows, { name: seed.name }).artistId;
+      ingestJamBase(db, [concert(`2026-12-0${i + 1}`, [{ ...mate, "x-isHeadliner": true }, W])], {
+        name: mate.name,
+        jambaseId: mate.identifier,
+      });
+      return id;
+    });
+    const ranked = names(recommendFromGraph(db, ids));
+    expect(ranked[0]).toBe("Wide");
+    expect(ranked.indexOf("Mate 0")).toBeLessThan(ranked.indexOf("Big"));
+  });
+
+  it("redoes scores stored before the combined score", () => {
+    db.exec(`CREATE TABLE affinity (artist_id INTEGER PRIMARY KEY, links INTEGER NOT NULL,
+      direct REAL NOT NULL, bridged REAL NOT NULL);
+      CREATE TABLE affinity_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+    const a = ingestJamBase(db, [concert("2026-11-01", [A, B])], { name: "Alpha" }).artistId;
+    expect(names(recommendFromGraph(db, [a]))).toEqual(["Bravo"]);
   });
 
   it("never recommends or bridges through your own bands", () => {
     const a = ingestJamBase(db, [concert("2026-11-01", [A, X])], { name: "Alpha" }).artistId;
     const x = ingestJamBase(db, [concert("2026-11-02", [X, B])], { name: "X-Ray" }).artistId;
-    const { direct, oneStep } = recommendFromGraph(db, [a, x]);
-    expect(names(direct)).toEqual(["Bravo"]);
-    expect(oneStep).toEqual([]);
+    const ranked = recommendFromGraph(db, [a, x]);
+    expect(names(ranked)).toEqual(["Bravo"]);
+    expect(ranked[0].bridges).toEqual([]);
+  });
+});
+
+describe("matchScore", () => {
+  it("maps raw scores onto 1-100, saturating for many strong links", () => {
+    expect(matchScore(0)).toBe(1);
+    expect(matchScore(0.001)).toBe(1);
+    const oneUpcoming = matchScore(s(UP)); // one small upcoming bill with one of your bands
+    const farOff = matchScore((HOP_DAMPING * s(UP) * s(UP)) / Math.sqrt(10)); // one 2-hop link via a busy act
+    expect(farOff).toBeLessThan(10);
+    expect(oneUpcoming).toBeGreaterThan(30);
+    expect(oneUpcoming).toBeLessThan(50);
+    expect(matchScore(5 * s(2 * UP))).toBeGreaterThan(90);
+    expect(matchScore(100)).toBe(100);
   });
 });
 
@@ -150,9 +220,10 @@ describe("ingestConcertArchives", () => {
     expect(artistId).toBe(a);
     expect(shows).toBe(2);
 
-    const { direct } = recommendFromGraph(db, [a]);
+    const direct = recommendFromGraph(db, [a]);
     expect(names(direct)).toEqual(["Bravo"]);
-    expect(direct[0].score).toBe(2); // 2025-03-01 from history, 2026-11-01 from both sources
+    // 2025-03-01 from history, 2026-11-01 (upcoming) from both sources
+    expect(direct[0].score).toBeCloseTo(s(1 + UP));
     expect(direct[0].direct[0].shows.map((s) => s.source)).toEqual(["concertarchives", "jambase"]);
     expect(describeDirect(direct[0].direct[0], "2026-10-09")).toBe(
       "Opening for Alpha on 2 dates, 1 of them upcoming",

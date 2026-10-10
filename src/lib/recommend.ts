@@ -25,7 +25,7 @@ const refreshPerVisit = () => envCount("BANDWAGON_REFRESH_PER_VISIT", 5);
 
 /**
  * How many of the top directly linked acts to look up on JamBase so their own
- * co-bills feed the "one step further" list. Each costs one JamBase call per
+ * co-bills feed the one-step-further part of the score. Each costs one JamBase call per
  * month at most. Set BANDWAGON_EXPAND=0 to turn it off.
  */
 const expandCount = () => envCount("BANDWAGON_EXPAND", 5);
@@ -39,9 +39,8 @@ export type SeedStatus =
   | { kind: "error" };
 
 export type ProfileOutcome = {
-  /** The requested page of each list. */
-  direct: GraphPage;
-  oneStep: GraphPage;
+  /** The requested page of the ranked list. */
+  results: GraphPage;
   today: string;
   /** How many bands you like. */
   liked: number;
@@ -52,6 +51,8 @@ export type ProfileOutcome = {
   budget: { used: number; limit: number };
   noKey: boolean;
 };
+
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
 const isFresh = (at: string | null, now: Date) =>
   at !== null && now.getTime() - Date.parse(at) < REFRESH_MS;
@@ -90,8 +91,8 @@ async function refreshSeed(db: Db, seed: Seed, now: Date): Promise<SeedStatus> {
 async function widen(db: Db, seedIds: number[], exclude: Set<number>, now: Date): Promise<void> {
   const n = expandCount();
   if (n === 0) return;
-  rebuildAffinity(db, seedIds, exclude);
-  for (const c of affinityPage(db, "direct", { limit: n, linksShown: 0 }).candidates) {
+  rebuildAffinity(db, seedIds, exclude, isoDay(now));
+  for (const c of affinityPage(db, { limit: n, linksShown: 0, linkedOnly: true }).candidates) {
     const id = c.artist.jambase_id;
     if (!id || isFresh(lastFetched(db, c.artist.id, "jambase"), now)) continue;
     if (remainingCalls(db, "jambase", now) < 1) return;
@@ -115,7 +116,7 @@ async function widen(db: Db, seedIds: number[], exclude: Set<number>, now: Date)
  * co-bills from Concert Archives. Bands you're not interested in are left
  * out of the results.
  */
-export type PageRequest = { direct?: number; oneStep?: number; size?: number };
+export type PageRequest = { page?: number; size?: number };
 
 export async function recommendForProfile(
   db: Db = getDb(),
@@ -156,13 +157,12 @@ export async function recommendForProfile(
   }
   if (!noKey && seedIds.length > 0) await widen(db, seedIds, exclude, now);
 
-  rebuildAffinity(db, seedIds, exclude);
+  const today = isoDay(now);
+  rebuildAffinity(db, seedIds, exclude, today);
   const size = pages.size ?? 25;
-  const page = (list: "direct" | "oneStep", n = 0) => affinityPage(db, list, { offset: n * size, limit: size });
   return {
-    direct: page("direct", pages.direct),
-    oneStep: page("oneStep", pages.oneStep),
-    today: now.toISOString().slice(0, 10),
+    results: affinityPage(db, { offset: (pages.page ?? 0) * size, limit: size }),
+    today,
     liked: likedPrefs.length,
     refreshed,
     waiting: due.length - refreshed.filter((r) => r.status.kind !== "error").length,
