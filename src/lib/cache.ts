@@ -6,11 +6,15 @@
  */
 export class TtlCache<V> {
   private entries = new Map<string, { value: V; expires: number }>();
+  // Plain fields rather than constructor parameter properties: scripts run
+  // this file through Node's type stripping, which doesn't support those.
+  private ttlMs: number;
+  private maxEntries: number;
 
-  constructor(
-    private ttlMs: number,
-    private maxEntries = 500,
-  ) {}
+  constructor(ttlMs: number, maxEntries = 500) {
+    this.ttlMs = ttlMs;
+    this.maxEntries = maxEntries;
+  }
 
   get(key: string): V | undefined {
     const hit = this.entries.get(key);
