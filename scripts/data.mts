@@ -17,14 +17,23 @@
  *       Like every band in a text or CSV file (one per line, first column).
  *       Looks each up on MusicBrainz, 1 per second; names shared by several
  *       artists are listed for you to pick in the app, unless --first.
+ *   node --env-file=.env.local scripts/data.mts area [--check]
+ *       Pull every upcoming concert around home (BANDWAGON_HOME, default
+ *       100 miles around Detroit) from JamBase, or carry on a pull left
+ *       partway. --check spends one call to see whether JamBase applies the
+ *       area filter and how many pages a full pull takes.
  *
- * Only `like` calls an API (MusicBrainz, free). Nothing here spends credits.
+ * `like` calls MusicBrainz (free) and `area` calls JamBase, within the
+ * monthly budget. Nothing here spends parse.bot credits.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_DB_FILE, openDb } from "../src/lib/db.ts";
 import { searchArtists } from "../src/lib/musicbrainz.ts";
 import { exportData, importData } from "../src/lib/portable.ts";
+import { callsThisMonth, monthlyBudget } from "../src/lib/budget.ts";
+import { areaMonthlyCalls, pullArea } from "../src/lib/metro.ts";
+import { homeFromEnv } from "../src/lib/nearby.ts";
 import { likeMany, namesFromList } from "../src/lib/prefs.ts";
 import { importRawPages, performerLedger, rebuildConcertArchives } from "../src/lib/vault.ts";
 
@@ -95,6 +104,29 @@ async function like() {
   }
 }
 
+async function area() {
+  const home = homeFromEnv();
+  const check = args.includes("--check");
+  console.log(`concerts within ${home.radiusMiles} miles of ${home.lat},${home.lon}`);
+  const r = await pullArea(db, home, { maxPages: check ? 1 : undefined, log: (line) => console.log(line) });
+  if (r.check) {
+    const c = r.check;
+    console.log(
+      c.ok
+        ? `area filter works: ${c.located} venues on page 1, farthest ${Math.round(c.farthest)} miles`
+        : `area filter NOT applied: ${r.pull.note}`,
+    );
+  }
+  const { pull } = r;
+  if (pull.total_pages) console.log(`a full pull is ${pull.total_pages} pages, one JamBase call each`);
+  console.log(
+    `${pull.outcome}: ${pull.concerts} concerts stored so far, ${r.calls} calls this run` +
+      (r.stoppedBy === "area-cap" ? ` (stopped at the area's ${areaMonthlyCalls()} calls a month)` : "") +
+      (r.stoppedBy === "budget" ? " (stopped at the monthly budget)" : ""),
+  );
+  console.log(`JamBase calls this month: ${callsThisMonth(db, "jambase")} of ${monthlyBudget("jambase")}`);
+}
+
 const commands: Record<string, () => void | Promise<void>> = {
   "import-raw": importRaw,
   rebuild,
@@ -102,11 +134,12 @@ const commands: Record<string, () => void | Promise<void>> = {
   export: exportCmd,
   import: importCmd,
   like,
+  area,
 };
 const run = commands[command ?? ""];
 if (!run) {
   console.error(
-    "usage: node scripts/data.mts import-raw [dir] | rebuild | status | export [file] | import <file> | like <file> [--first]",
+    "usage: node scripts/data.mts import-raw [dir] | rebuild | status | export [file] | import <file> | like <file> [--first] | area [--check]",
   );
   process.exit(1);
 }

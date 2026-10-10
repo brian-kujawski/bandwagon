@@ -16,6 +16,16 @@ Like the bands you love, as many as you want, and bandwagon recommends the artis
 
 5. **Near you.** Cards don't list every shared date, only the counts ("Opening for X on 8 upcoming dates"). When a suggested band has an upcoming show within 100 miles of downtown Detroit, the card lists it under "Playing near you" with a link to the JamBase event page. Distances use the venue coordinates JamBase gives. Change the area with `BANDWAGON_HOME` and `BANDWAGON_RADIUS_MILES`.
 
+6. **Everything playing near you.** Once a month the app also pulls every upcoming concert within that radius from JamBase, 100 to a call, after the results page has loaded. A suggested band's local date then shows up even if the app never looked that band up, and local bills (a touring act with its local openers) add links to the web. Festivals are still left out.
+   - The pull may use up to `BANDWAGON_AREA_MONTHLY_CALLS` calls a month (default 150), inside the overall JamBase budget. If either runs out partway it stops and carries on at the next page later; JamBase lists soonest dates first, so the coming weeks come in first. `BANDWAGON_AREA=off` turns it off.
+   - JamBase's area filter isn't confirmed live yet, so each pull checks the venues on its first page. If they aren't within the radius it stops after that one call, stores nothing, says so on the results page, and tries again a week later.
+   - To run it by hand, or to check the filter with one call first:
+
+     ```bash
+     node --env-file=.env.local scripts/data.mts area --check   # 1 call: does the filter work, how many pages?
+     node --env-file=.env.local scripts/data.mts area           # the full pull, or the rest of one
+     ```
+
 Because everything lands in one database, Concert Archives history (from the vault, below) links up with JamBase shows by artist name, and every search makes the web a little bigger.
 
 ## Running it
@@ -53,6 +63,7 @@ npm run build
 - `src/lib/portable.ts`: export and merge-import of the vault, your band choices and call counts between machines.
 - `src/lib/graph.ts`: direct and 2-hop scores for every artist, stored in `affinity` and read a page at a time, and the "why" text. Unit tested against an in-memory database.
 - `src/lib/recommend.ts`: refreshes a few liked bands per visit and the top neighbours (monthly, within the budget), then ranks.
+- `src/lib/metro.ts`: the monthly pull of every upcoming concert around home, with the first-page check that JamBase applied the area filter, resuming, and its own monthly call cap.
 - `src/lib/cobills.ts`: JamBase event helpers (seed detection, billing relation, venue).
 - `src/lib/concertArchives.ts`: turns Concert Archives concert lists into co-bills (lineups from show titles, festival filter, de-duplication).
 - `src/app/`: band search and your saved bands (`page.tsx`), the results page (`bands/page.tsx`), and the like / not-interested server action (`actions.ts`). Old `/artist/<mbid>` links redirect home.

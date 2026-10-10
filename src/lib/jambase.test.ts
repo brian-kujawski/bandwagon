@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getUpcomingEvents, matchArtist, MissingJamBaseKeyError, type JbArtist } from "./jambase";
+import { getEventsNear, getUpcomingEvents, matchArtist, MissingJamBaseKeyError, type JbArtist } from "./jambase";
 
 const MBID = "c605445c-13ca-4cd2-bbc2-d5195004fe7f";
 
@@ -87,5 +87,24 @@ describe("getUpcomingEvents", () => {
     await expect(
       getUpcomingEvents("55555555-5555-4555-8555-555555555555", "Band"),
     ).rejects.toBeInstanceOf(MissingJamBaseKeyError);
+  });
+
+  it("asks for concerts within a radius, a page at a time", async () => {
+    fetchMock.mockResolvedValueOnce(json({ events: [], pagination: { page: 2, totalPages: 4 } }));
+    let calls = 0;
+    const out = await getEventsNear({ lat: 42.3314, lon: -83.0458, radiusMiles: 100, from: "2026-10-10", page: 2 }, () => calls++);
+    expect(out.pagination.totalPages).toBe(4);
+    expect(calls).toBe(1);
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      geoLatitude: "42.3314",
+      geoLongitude: "-83.0458",
+      geoRadiusAmount: "100",
+      geoRadiusUnits: "mi",
+      eventType: "concerts",
+      eventDateFrom: "2026-10-10",
+      page: "2",
+      perPage: "100",
+    });
   });
 });
