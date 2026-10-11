@@ -37,10 +37,10 @@ export default async function Home({ searchParams }: PageProps<"/">) {
 
       {likedCount > 0 && (
         <div className="picked">
-          <Link href="/likes">
+          <Link href="/bands">
             Your {likedCount === 1 ? "band" : `${likedCount} bands`}
           </Link>
-          <Link className="go" href="/bands">
+          <Link className="go" href="/suggestions">
             Find bands like {likedCount === 1 ? "this one" : `these ${likedCount}`} →
           </Link>
         </div>

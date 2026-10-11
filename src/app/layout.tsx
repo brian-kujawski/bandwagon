@@ -16,8 +16,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             bandwagon
           </Link>
           <nav className="site-nav">
-            <Link href="/likes">Your bands</Link>
-            <Link href="/bands">Suggestions</Link>
+            <Link href="/bands">Your bands</Link>
+            <Link href="/suggestions">Suggestions</Link>
           </nav>
         </header>
         <main>{children}</main>

@@ -4,7 +4,7 @@ Like the bands you love, as many as you want, and bandwagon recommends the artis
 
 ## How it works
 
-1. **Like your bands.** The search box queries [MusicBrainz](https://musicbrainz.org) and lists every artist with that name, with the disambiguation note, area, years active, and top tags, so you can like the right "Low". There is no cap, and `node scripts/data.mts like <file>` likes a whole list at once. Mark bands "Not interested" to keep them out of results; they can still connect two bands you like. **Your bands** (`/likes`) lists both, 100 to a page with a name filter, where you can remove a band or check its concert history (below).
+1. **Like your bands.** The search box queries [MusicBrainz](https://musicbrainz.org) and lists every artist with that name, with the disambiguation note, area, years active, and top tags, so you can like the right "Low". There is no cap, and `node scripts/data.mts like <file>` likes a whole list at once. Mark bands "Not interested" to keep them out of results; they can still connect two bands you like. **Your bands** (`/bands`) lists both, 100 to a page with a name filter, where you can remove a band or check its concert history (below).
 2. **Collect their shows.** Each visit to the results page asks the [JamBase Data API](https://data.jambase.com) for the upcoming events of a few liked bands that haven't been checked for a month (`BANDWAGON_REFRESH_PER_VISIT`, default 5), by MusicBrainz ID with a name-search fallback, and stores every concert bill in a local SQLite database. Festivals are left out.
 3. **Widen the web.** The top five directly linked acts get their own upcoming shows looked up too (one JamBase call each, re-checked at most monthly), so the database learns who *they* play with.
    - Every JamBase call is counted, and the app stops at `JAMBASE_MONTHLY_BUDGET` calls a month (default 900, under the free tier's 1,000). The results page shows the month's count.
@@ -71,7 +71,7 @@ npm run build
 - `src/lib/concertArchives.ts`: turns Concert Archives concert lists into co-bills (lineups from show titles, festival filter, de-duplication).
 - `src/lib/parsebot.ts`: the parse.bot client (key from the environment, pacing, one retry on its stalled 401s).
 - `src/lib/backfill.ts`: confirmed concert history checks, run one at a time from a queue, with their state in `ca_backfill`.
-- `src/app/`: band search (`page.tsx`), your bands with remove and history-check buttons (`likes/page.tsx`), the results page (`bands/page.tsx`), and the server actions (`actions.ts`). Old `/artist/<mbid>` links redirect home.
+- `src/app/`: band search (`page.tsx`), your bands with remove and history-check buttons (`bands/page.tsx`, at `/bands`; the old `/likes` redirects there), the suggestions page (`suggestions/page.tsx`), and the server actions (`actions.ts`). Old `/artist/<mbid>` links redirect home.
 
 JamBase's storage terms are still unchecked, so the database is for local, non-commercial experimenting. Don't deploy it publicly or share the file until they are.
 
