@@ -208,6 +208,54 @@ a.card:hover {
   list-style: none;
 }
 
+.nearby-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.15rem 0;
+}
+
+/* Add to Google Calendar: a round "+" in a show's bottom right corner. */
+.has-add-cal {
+  position: relative;
+  padding-right: 3.75rem;
+}
+
+.add-cal {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 1.7rem;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.add-cal:hover {
+  filter: brightness(1.1);
+}
+
+.add-cal:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.add-cal-small {
+  position: static;
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  font-size: 1.35rem;
+}
+
 .notice {
   padding: 1rem;
   border: 1px dashed var(--line);

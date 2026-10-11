@@ -12,6 +12,8 @@ export const DETROIT: Home = { lat: 42.3314, lon: -83.0458, radiusMiles: 100 };
 
 export type NearbyShow = {
   date: string;
+  /** HH:MM at the venue, when known. */
+  time: string | null;
   venue: string;
   city: string;
   url: string | null;
@@ -47,7 +49,7 @@ export function nearbyShows(db: Db, artistId: number, today: string, home: Home)
   const dLat = home.radiusMiles / 69;
   const rows = db
     .prepare(
-      `SELECT e.date, e.venue, e.city, e.url, e.lat, e.lon
+      `SELECT e.date, e.start_time, e.venue, e.city, e.url, e.lat, e.lon
        FROM appearances a JOIN events e ON e.id = a.event_id
        WHERE a.artist_id = ? AND e.cancelled = 0 AND e.date >= ?
          AND e.lat BETWEEN ? AND ? AND e.lon IS NOT NULL
@@ -55,6 +57,7 @@ export function nearbyShows(db: Db, artistId: number, today: string, home: Home)
     )
     .all(artistId, today, home.lat - dLat, home.lat + dLat) as {
     date: string;
+    start_time: string | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -67,7 +70,7 @@ export function nearbyShows(db: Db, artistId: number, today: string, home: Home)
     const miles = milesBetween(home.lat, home.lon, r.lat, r.lon);
     if (miles > home.radiusMiles || seen.has(r.date)) continue;
     seen.add(r.date);
-    shows.push({ date: r.date, venue: r.venue ?? "", city: r.city ?? "", url: r.url, miles });
+    shows.push({ date: r.date, time: r.start_time, venue: r.venue ?? "", city: r.city ?? "", url: r.url, miles });
   }
   return shows;
 }
@@ -101,7 +104,7 @@ export function concertsFor(
   const dLat = home.radiusMiles / 69;
   const rows = db
     .prepare(
-      `SELECT e.id, e.date, e.venue, e.city, e.url, e.lat, e.lon, a.artist_id
+      `SELECT e.id, e.date, e.start_time, e.venue, e.city, e.url, e.lat, e.lon, a.artist_id
        FROM appearances a JOIN events e ON e.id = a.event_id
        WHERE a.artist_id IN (SELECT value FROM json_each(?)) AND e.cancelled = 0 AND e.date >= ?
          AND e.lat BETWEEN ? AND ? AND e.lon IS NOT NULL
@@ -110,6 +113,7 @@ export function concertsFor(
     .all(JSON.stringify(ids), today, home.lat - dLat, home.lat + dLat) as {
     id: number;
     date: string;
+    start_time: string | null;
     venue: string | null;
     city: string | null;
     url: string | null;
@@ -149,6 +153,7 @@ export function concertsFor(
     return {
       eventId: r.id,
       date: r.date,
+      time: r.start_time,
       venue: r.venue ?? "",
       city: r.city ?? "",
       url: r.url,

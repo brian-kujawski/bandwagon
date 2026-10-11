@@ -66,6 +66,8 @@ function saveJamBaseConcert(
       source: "jambase",
       sourceId: e.identifier,
       date: e.startDate?.slice(0, 10) ?? null,
+      // "2026-12-12T18:30:00" carries a time; a bare date doesn't.
+      startTime: /T\d\d:\d\d/.test(e.startDate ?? "") ? e.startDate!.slice(11, 16) : null,
       ...place(e),
       url: e.url ?? null,
       cancelled,

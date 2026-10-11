@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { after, connection } from "next/server";
 import type { CSSProperties, ReactNode } from "react";
+import { AddToCalendar } from "../add-to-calendar";
 import { getArtistRow, getDb, transaction } from "@/lib/db";
 import { matchScore, suggestionScores } from "@/lib/graph";
 import { concertsFor, homeFromEnv, type ConcertShow } from "@/lib/nearby";
@@ -20,6 +21,10 @@ function formatDay(iso: string): string {
 function formatMonth(iso: string): string {
   return noon(iso).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
+
+/** "a, b and c" as plain text, for calendar titles. */
+const andText = (items: string[]) =>
+  items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 
 /** "a, b and c" */
 function and(items: ReactNode[]): ReactNode {
@@ -52,8 +57,16 @@ function Show({ show, listen }: { show: ConcertShow; listen: Map<string, string>
   // A show none of your bands play is there for a suggestion: badge it like one.
   const match = show.liked.length === 0 ? matchScore(Math.max(...show.suggested.map((s) => s.score))) : null;
   const hue = match ? ({ "--match-hue": matchHue(match) } as CSSProperties) : undefined;
+  const headline = show.liked.length > 0 ? show.liked : show.suggested.map((s) => s.name);
+  const calendar = {
+    title: show.venue ? `${andText(headline)} at ${show.venue}` : andText(headline),
+    date: show.date,
+    time: show.time,
+    location: place,
+    details: [show.lineup.length > 1 && `Lineup: ${show.lineup.join(", ")}`, show.url].filter(Boolean).join("\n\n"),
+  };
   return (
-    <li className={match ? "card match-card" : "card"} style={hue}>
+    <li className={match ? "card match-card has-add-cal" : "card has-add-cal"} style={hue}>
       <div className="card-head">
         <div className="card-title">{show.liked.length > 0 ? and(show.liked) : and(suggested)}</div>
         <span className="concert-when">
@@ -76,6 +89,7 @@ function Show({ show, listen }: { show: ConcertShow; listen: Map<string, string>
         {show.url ? <a href={show.url}>{place || "Details"}</a> : place}
         <span className="meta"> · {Math.max(1, Math.round(show.miles))} mi</span>
       </div>
+      <AddToCalendar show={calendar} />
     </li>
   );
 }
