@@ -74,6 +74,18 @@ export function setPref(db: Db, band: BandRef, status: PrefStatus, now: string =
   }
 }
 
+/** A saved band by its key, whatever its status. */
+export function getPrefByKey(db: Db, key: string): BandPref | null {
+  ensurePrefs(db);
+  return (db.prepare("SELECT * FROM band_prefs WHERE key = ?").get(key) as BandPref | undefined) ?? null;
+}
+
+/** Remember which Concert Archives performer a saved band is. */
+export function setPrefCaSlug(db: Db, key: string, caSlug: string, now: string = new Date().toISOString()): void {
+  ensurePrefs(db);
+  db.prepare("UPDATE band_prefs SET ca_slug = ?, updated_at = ? WHERE key = ?").run(caSlug, now, key);
+}
+
 export function getPref(db: Db, band: BandRef): PrefStatus | null {
   ensurePrefs(db);
   const row = db.prepare("SELECT status FROM band_prefs WHERE key = ?").get(prefKey(band)) as
@@ -82,20 +94,30 @@ export function getPref(db: Db, band: BandRef): PrefStatus | null {
   return row && row.status !== "cleared" ? row.status : null;
 }
 
+/** `search` keeps names containing it, ignoring case. */
+const nameFilter = (search?: string) => `%${(search ?? "").trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
 export function listPrefs(
   db: Db,
   status: Exclude<PrefStatus, "cleared">,
-  page: { limit?: number; offset?: number } = {},
+  page: { limit?: number; offset?: number; search?: string } = {},
 ): BandPref[] {
   ensurePrefs(db);
   return db
-    .prepare("SELECT * FROM band_prefs WHERE status = ? ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?")
-    .all(status, page.limit ?? -1, page.offset ?? 0) as BandPref[];
+    .prepare(
+      `SELECT * FROM band_prefs WHERE status = ? AND name LIKE ? ESCAPE '\\'
+       ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?`,
+    )
+    .all(status, nameFilter(page.search), page.limit ?? -1, page.offset ?? 0) as BandPref[];
 }
 
-export function countPrefs(db: Db, status: Exclude<PrefStatus, "cleared">): number {
+export function countPrefs(db: Db, status: Exclude<PrefStatus, "cleared">, search?: string): number {
   ensurePrefs(db);
-  return (db.prepare("SELECT COUNT(*) AS n FROM band_prefs WHERE status = ?").get(status) as { n: number }).n;
+  return (
+    db
+      .prepare("SELECT COUNT(*) AS n FROM band_prefs WHERE status = ? AND name LIKE ? ESCAPE '\\'")
+      .get(status, nameFilter(search)) as { n: number }
+  ).n;
 }
 
 /** The artist row for each saved band, in order, created when the graph hasn't met it yet. */
