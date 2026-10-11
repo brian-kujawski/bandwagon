@@ -150,7 +150,8 @@ With bills stored as a graph, richer signals become queries rather than new data
 
 What it needs underneath:
 
-- **Coverage.** The web is only as dense as the shows stored. The monthly refresh should walk outward from tracked bands a step at a time, within the JamBase quota, and Concert Archives history fills in the past for bands worth the parse.bot credits.
+- **Coverage.** The web is only as dense as the shows stored. The monthly refresh should walk outward from tracked bands a step at a time, within the JamBase quota, and Concert Archives history fills in the past for a few chosen bands.
+- **History source (open).** parse.bot works for Concert Archives but is too slow and too costly to record history in earnest. Tried 2026-10-10: a check crawls through a band's pages one slow call at a time, and credits are limited. It stays in the app for one-off checks of single bands, but meaningful history needs a different source, for example a Concert Archives data request (they license exports), setlist.fm for the bands it covers well, or collecting forward from our own monthly JamBase pulls.
 - **Identity.** Matching acts across sources by name is naive ("Low" vs. "Low"). Store MusicBrainz IDs for neighbours when we can resolve them, and flag ambiguous names rather than merging them.
 - **Scale.** SQLite handles this comfortably for a personal experiment. If the graph grows to millions of edges or needs heavier graph algorithms, export to a graph library (for example NetworkX or graphology) in a batch job rather than switching databases.
 

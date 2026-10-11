@@ -83,6 +83,8 @@ node scripts/graph.mts stats
 
 ## Concert Archives history (experimental)
 
+**Status: a stopgap.** Checks work, but parse.bot answers very slowly, one page of about 50 shows at a time, and its credits are limited and fairly expensive. That's fine for checking a few bands by hand, not for recording history for many. A different history source is an open question (see "History source" in [docs/PLAN.md](docs/PLAN.md)).
+
 On **Your bands**, each liked band has a "Check concert history" button. It asks first, since parse.bot credits are limited and fairly expensive, then fetches the band's last five years of shows from Concert Archives in the background, one band at a time, and the page shows how it's going and what's stored. Nothing calls parse.bot without that confirmation.
 
 - The first check finds the band on Concert Archives (2 credits). When several performers share the name, or none matches exactly, the page lists them to pick from; the search is kept, so picking costs nothing extra.
