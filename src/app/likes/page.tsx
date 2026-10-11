@@ -15,7 +15,7 @@ import {
   type BackfillRow,
 } from "@/lib/backfill";
 import { getDb } from "@/lib/db";
-import { parseBotConfig } from "@/lib/parsebot";
+import { describeConfig, parseBotConfig } from "@/lib/parsebot";
 import { countPrefs, listPrefs, type BandPref } from "@/lib/prefs";
 import type { PerformerLedger } from "@/lib/vault";
 
@@ -96,7 +96,8 @@ export default async function Likes({ searchParams }: PageProps<"/likes">) {
   const prefs = listPrefs(db, status, { limit: PAGE_SIZE, offset: (pageNo - 1) * PAGE_SIZE, search: q });
   const lastPage = Math.max(1, Math.ceil(matching / PAGE_SIZE));
 
-  const canCheck = parseBotConfig() !== null;
+  const parseBot = parseBotConfig();
+  const canCheck = parseBot !== null;
   const cap = maxCreditsPerCheck();
   const pending = pendingChecks(db);
   // Checks queued before a restart carry on once the page is open again.
@@ -212,6 +213,10 @@ export default async function Likes({ searchParams }: PageProps<"/likes">) {
           To check a band&apos;s concert history on Concert Archives, add <code>PARSE_API_KEY</code> and{" "}
           <code>PARSE_SCRAPER_ID</code> to <code>.env.local</code> and restart the app.
         </p>
+      )}
+
+      {tab === "liked" && parseBot && (
+        <p className="meta parse-config">Concert history checks use parse.bot {describeConfig(parseBot)}.</p>
       )}
 
       {(tab === "liked" ? likedCount : hiddenCount) > PAGE_SIZE / 4 && (

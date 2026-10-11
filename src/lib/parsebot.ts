@@ -30,11 +30,23 @@ export type ParseBotConfig = { apiKey: string; scraperId: string; baseUrl?: stri
  * PARSE_API_KEY and PARSE_SCRAPER_ID, or null when either is missing.
  * PARSE_API_BASE points at a stand-in server for trying the app without credits.
  */
-export function parseBotConfig(env: NodeJS.ProcessEnv = process.env): ParseBotConfig | null {
+export function parseBotConfig(env: Record<string, string | undefined> = process.env): ParseBotConfig | null {
   const apiKey = env.PARSE_API_KEY?.trim();
   const scraperId = env.PARSE_SCRAPER_ID?.trim();
   const baseUrl = env.PARSE_API_BASE?.trim() || undefined;
   return apiKey && scraperId ? { apiKey, scraperId, baseUrl } : null;
+}
+
+/**
+ * Enough of the key and scraper ID to compare with parse.bot's dashboard
+ * without showing the key: its length and last four characters.
+ */
+export function describeConfig(config: ParseBotConfig): string {
+  const k = config.apiKey;
+  return (
+    `key ${k.slice(0, 4)}…${k.slice(-4)} (${k.length} characters), scraper ${config.scraperId}` +
+    (config.baseUrl ? `, at ${config.baseUrl}` : "")
+  );
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -84,7 +96,8 @@ export function parseBotClient(
       const retry = await call(endpoint, params, attempt + 1);
       return { ...retry, credits: retry.credits + charged };
     }
-    throw new ParseBotError(endpoint, res.status, body.slice(0, 300), charged);
+    const hint = res.status === 401 ? ` (the app sent ${describeConfig(config)})` : "";
+    throw new ParseBotError(endpoint, res.status, body.slice(0, 300) + hint, charged);
   }
 
   return { call: (endpoint, params) => call(endpoint, params) };
