@@ -18,6 +18,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <nav className="site-nav">
             <Link href="/bands">Your bands</Link>
             <Link href="/suggestions">Suggestions</Link>
+            <Link href="/concerts">Concerts</Link>
           </nav>
         </header>
         <main>{children}</main>

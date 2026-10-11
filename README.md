@@ -19,14 +19,18 @@ Like the bands you love, as many as you want, and bandwagon recommends the artis
 6. **Listen on Spotify.** A suggested band's name opens its Spotify artist page in a new tab. The app searches Spotify by name with your app's client credentials (`SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`) and takes the first (most relevant) result with the band's exact name, ignoring case, accents and a leading "The". With no such result, or without credentials, the name opens a Spotify search for it, and the results page says why when the lookup itself failed. `node --env-file=.env.local scripts/data.mts spotify "Band name"` shows Spotify's results for one band and which one it picks. Answers are stored in the `spotify_matches` table, so each band is looked up once; bands with no match are tried again after a month.
 
 7. **Everything playing near you.** Once a month the app also pulls every upcoming concert within that radius from JamBase, 100 to a call, after the results page has loaded. A suggested band's local date then shows up even if the app never looked that band up, and local bills (a touring act with its local openers) add links to the web. Festivals are still left out.
+
    - The pull may use up to `BANDWAGON_AREA_MONTHLY_CALLS` calls a month (default 150), inside the overall JamBase budget. If either runs out partway it stops and carries on at the next page later; JamBase lists soonest dates first, so the coming weeks come in first. `BANDWAGON_AREA=off` turns it off.
    - JamBase's area filter isn't confirmed live yet, so each pull checks the venues on its first page. If they aren't within the radius it stops after that one call, stores nothing, says so on the results page, and tries again a week later.
+
    - To run it by hand, or to check the filter with one call first:
 
      ```bash
      node --env-file=.env.local scripts/data.mts area --check   # 1 call: does the filter work, how many pages?
      node --env-file=.env.local scripts/data.mts area           # the full pull, or the rest of one
      ```
+
+8. **Your concerts.** **Concerts** (`/concerts`) lists every upcoming show within the radius with at least one liked band on the bill, soonest first and grouped by month, with the rest of the lineup and a link to the JamBase event page. A show several of your bands share is listed once. It reads only what's stored, so it spends no JamBase calls; your bands' dates come from the results page's checks and the monthly area pull.
 
 Because everything lands in one database, Concert Archives history (from the vault, below) links up with JamBase shows by artist name, and every search makes the web a little bigger.
 
@@ -71,7 +75,7 @@ npm run build
 - `src/lib/concertArchives.ts`: turns Concert Archives concert lists into co-bills (lineups from show titles, festival filter, de-duplication).
 - `src/lib/parsebot.ts`: the parse.bot client (key from the environment, pacing, one retry on its stalled 401s).
 - `src/lib/backfill.ts`: confirmed concert history checks, run one at a time from a queue, with their state in `ca_backfill`.
-- `src/app/`: band search (`page.tsx`), your bands with remove and history-check buttons (`bands/page.tsx`, at `/bands`; the old `/likes` redirects there), the suggestions page (`suggestions/page.tsx`), and the server actions (`actions.ts`). Old `/artist/<mbid>` links redirect home.
+- `src/app/`: band search (`page.tsx`), your bands with remove and history-check buttons (`bands/page.tsx`, at `/bands`; the old `/likes` redirects there), the suggestions page (`suggestions/page.tsx`), your bands' nearby shows (`concerts/page.tsx`), and the server actions (`actions.ts`). Old `/artist/<mbid>` links redirect home.
 
 JamBase's storage terms are still unchecked, so the database is for local, non-commercial experimenting. Don't deploy it publicly or share the file until they are.
 

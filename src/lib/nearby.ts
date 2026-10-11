@@ -71,3 +71,81 @@ export function nearbyShows(db: Db, artistId: number, today: string, home: Home)
   }
   return shows;
 }
+
+export type LikedShow = NearbyShow & {
+  eventId: number;
+  /** The liked bands on the bill, headliner first. */
+  liked: string[];
+  /** Everyone on the bill, headliner first, liked bands included. */
+  lineup: string[];
+};
+
+/**
+ * Every upcoming show near home with at least one of these bands on the
+ * bill, soonest first. A show several liked bands share is listed once. As
+ * in nearbyShows, a band counts once per date, so a show stored by two
+ * sources isn't listed twice.
+ */
+export function likedShows(db: Db, artistIds: number[], today: string, home: Home): LikedShow[] {
+  if (artistIds.length === 0) return [];
+  const dLat = home.radiusMiles / 69;
+  const rows = db
+    .prepare(
+      `SELECT e.id, e.date, e.venue, e.city, e.url, e.lat, e.lon, a.artist_id
+       FROM appearances a JOIN events e ON e.id = a.event_id
+       WHERE a.artist_id IN (SELECT value FROM json_each(?)) AND e.cancelled = 0 AND e.date >= ?
+         AND e.lat BETWEEN ? AND ? AND e.lon IS NOT NULL
+       ORDER BY e.date, e.source = 'jambase' DESC, e.id`,
+    )
+    .all(JSON.stringify([...new Set(artistIds)]), today, home.lat - dLat, home.lat + dLat) as {
+    id: number;
+    date: string;
+    venue: string | null;
+    city: string | null;
+    url: string | null;
+    lat: number;
+    lon: number;
+    artist_id: number;
+  }[];
+
+  const seen = new Set<string>(); // artist|date
+  const kept = new Map<number, (typeof rows)[number] & { miles: number }>();
+  for (const r of rows) {
+    const key = `${r.artist_id}|${r.date}`;
+    if (seen.has(key) && !kept.has(r.id)) continue;
+    const miles = milesBetween(home.lat, home.lon, r.lat, r.lon);
+    if (miles > home.radiusMiles) continue;
+    seen.add(key);
+    if (!kept.has(r.id)) kept.set(r.id, { ...r, miles });
+  }
+  if (kept.size === 0) return [];
+
+  const bills = new Map<number, { id: number; name: string }[]>();
+  const billRows = db
+    .prepare(
+      `SELECT p.event_id, ar.id, ar.name
+       FROM appearances p JOIN artists ar ON ar.id = p.artist_id
+       WHERE p.event_id IN (SELECT value FROM json_each(?))
+       ORDER BY p.event_id, COALESCE(p.headliner, 0) DESC, p.billing_rank IS NULL, p.billing_rank, ar.name`,
+    )
+    .all(JSON.stringify([...kept.keys()])) as { event_id: number; id: number; name: string }[];
+  for (const b of billRows) {
+    if (!bills.has(b.event_id)) bills.set(b.event_id, []);
+    bills.get(b.event_id)!.push({ id: b.id, name: b.name });
+  }
+
+  const mine = new Set(artistIds);
+  return [...kept.values()].map((r) => {
+    const bill = bills.get(r.id) ?? [];
+    return {
+      eventId: r.id,
+      date: r.date,
+      venue: r.venue ?? "",
+      city: r.city ?? "",
+      url: r.url,
+      miles: r.miles,
+      liked: bill.filter((b) => mine.has(b.id)).map((b) => b.name),
+      lineup: bill.map((b) => b.name),
+    };
+  });
+}
