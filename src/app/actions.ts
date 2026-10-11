@@ -37,7 +37,7 @@ export async function setBandPref(form: FormData): Promise<void> {
 /** Only ever send people back to the bands page. */
 const backTo = (form: FormData) => {
   const back = text(form, "back");
-  return back && /^\/likes(\?|$)/.test(back) ? back : "/likes";
+  return back && /^\/bands(\?|$)/.test(back) ? back : "/bands";
 };
 
 /**

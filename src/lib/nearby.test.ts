@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb, type Db } from "./db";
 import { ingestJamBase } from "./ingest";
 import type { JbEvent } from "./jambase";
-import { DETROIT, homeFromEnv, milesBetween, nearbyShows } from "./nearby";
+import { DETROIT, homeFromEnv, concertsFor, milesBetween, nearbyShows } from "./nearby";
 
 const TODAY = "2026-10-10";
 let n = 0;
@@ -80,6 +80,64 @@ describe("nearbyShows", () => {
     const { artistId } = ingestJamBase(db, [e], { name: "Alpha" });
     ingestJamBase(db, [{ ...e, location: { ...e.location, geo: undefined } }], { name: "Alpha" });
     expect(nearbyShows(db, artistId, TODAY, DETROIT)).toHaveLength(1);
+  });
+});
+
+describe("concertsFor", () => {
+  const bravo = { identifier: "jambase:2", name: "Bravo" };
+  const charlie = { identifier: "jambase:3", name: "Charlie", "x-isHeadliner": true };
+
+  it("lists every liked band's nearby shows once, soonest first", () => {
+    const { artistId: alpha } = ingestJamBase(
+      db,
+      [
+        show("2026-12-01", "Cleveland", CLE), // Alpha and Bravo
+        show("2026-11-05", "Chicago", CHI),
+        show("2026-05-01", "Detroit", DET), // past
+      ],
+      { name: "Alpha" },
+    );
+    const { artistId: bravoId } = ingestJamBase(
+      db,
+      [show("2026-11-01", "Detroit", DET, { performer: [charlie, bravo] })],
+      { name: "Bravo" },
+    );
+    const shows = concertsFor(db, { liked: [alpha, bravoId] }, TODAY, DETROIT);
+    expect(shows.map((s) => [s.date, s.city, s.liked, s.lineup])).toEqual([
+      ["2026-11-01", "Detroit", ["Bravo"], ["Charlie", "Bravo"]],
+      ["2026-12-01", "Cleveland", ["Alpha", "Bravo"], ["Alpha", "Bravo"]],
+    ]);
+    expect(concertsFor(db, { liked: [alpha] }, TODAY, { ...DETROIT, radiusMiles: 50 })).toEqual([]);
+    expect(concertsFor(db, { liked: [] }, TODAY, DETROIT)).toEqual([]);
+  });
+
+  it("adds suggested bands' shows when asked, marking which band is which", () => {
+    const { artistId: alpha } = ingestJamBase(db, [show("2026-12-01", "Cleveland", CLE)], { name: "Alpha" });
+    const { artistId: charlieId } = ingestJamBase(
+      db,
+      [show("2026-11-01", "Detroit", DET, { performer: [charlie, bravo] })],
+      { name: "Charlie" },
+    );
+    const bravoId = (db.prepare("SELECT id FROM artists WHERE name = 'Bravo'").get() as { id: number }).id;
+    const suggested = new Map([
+      [charlieId, 2],
+      [bravoId, 0.5],
+      [alpha, 9], // liked wins over a stale suggestion
+    ]);
+    const shows = concertsFor(db, { liked: [alpha], suggested }, TODAY, DETROIT);
+    expect(shows.map((s) => [s.city, s.liked, s.suggested])).toEqual([
+      ["Detroit", [], [{ name: "Charlie", score: 2 }, { name: "Bravo", score: 0.5 }]],
+      ["Cleveland", ["Alpha"], [{ name: "Bravo", score: 0.5 }]],
+    ]);
+  });
+
+  it("skips a second copy of a band's show on the same date", () => {
+    const { artistId } = ingestJamBase(
+      db,
+      [show("2026-11-01", "Detroit", DET), show("2026-11-01", "Detroit", DET)],
+      { name: "Alpha" },
+    );
+    expect(concertsFor(db, { liked: [artistId] }, TODAY, DETROIT)).toHaveLength(1);
   });
 });
 

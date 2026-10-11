@@ -1,237 +1,260 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { after, connection } from "next/server";
-import { PrefButtons } from "../pref-buttons";
+import { pickHistoryPerformer, setBandPref, startHistoryCheck } from "../actions";
+import { AutoRefresh } from "./auto-refresh";
+import {
+  candidatesOf,
+  clientFromEnv,
+  getCheck,
+  historyComplete,
+  HISTORY_YEARS,
+  ledgerFor,
+  maxCreditsPerCheck,
+  pendingChecks,
+  runQueuedChecks,
+  type BackfillRow,
+} from "@/lib/backfill";
 import { getDb } from "@/lib/db";
-import { spotifyLinks, spotifySearchUrl } from "@/lib/spotify";
-import type { CSSProperties } from "react";
-import {
-  describeBridge,
-  describeDirect,
-  matchScore,
-  type GraphPage,
-} from "@/lib/graph";
-import type { NearbyShow } from "@/lib/nearby";
-import {
-  recommendForProfile,
-  refreshAreaIfDue,
-  type ProfileCandidate,
-  type ProfileOutcome,
-} from "@/lib/recommend";
+import { describeConfig, parseBotConfig } from "@/lib/parsebot";
+import { countPrefs, listPrefs, type BandPref } from "@/lib/prefs";
+import type { PerformerLedger } from "@/lib/vault";
 
-const MAX_NEARBY_LISTED = 3;
-const MAX_LINKS_LISTED = 3;
-const MAX_BRIDGES_LISTED = 2;
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 100;
 
-/** "?page=2" -> 1 (zero-based), anything odd -> 0. */
-function pageParam(raw: string | string[] | undefined): number {
-  const n = Number(Array.isArray(raw) ? raw[0] : raw);
-  return Number.isInteger(n) && n > 1 ? n - 1 : 0;
-}
+const one = (raw: string | string[] | undefined) => (Array.isArray(raw) ? raw[0] : raw)?.trim() ?? "";
 
 function formatDate(iso: string | null): string {
-  if (!iso) return "Date unknown";
-  const d = new Date(`${iso}T12:00:00Z`);
+  if (!iso) return "?";
+  const d = new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-function NearbyLine({ show }: { show: NearbyShow }) {
-  const text = `${formatDate(show.date)} · ${[show.venue, show.city].filter(Boolean).join(", ")}`;
-  return (
-    <li>
-      {show.url ? <a href={show.url}>{text}</a> : text}
-      <span className="meta"> · {Math.max(1, Math.round(show.miles))} mi</span>
-    </li>
-  );
+/** The URL of this page with some parameters changed; undefined drops one. */
+function href(base: Record<string, string>, change: Record<string, string | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries({ ...base, ...change })) if (v) params.set(k, v);
+  const qs = params.toString();
+  return qs ? `/bands?${qs}` : "/bands";
 }
 
-function refreshNotes(o: ProfileOutcome): string[] {
-  return o.refreshed.flatMap(({ name, status }) =>
-    status.kind === "not-on-jambase"
-      ? [`${name} isn't listed on JamBase, so only stored shows are used for them.`]
-      : status.kind === "error"
-        ? [`JamBase didn't answer for ${name}; using stored shows only.`]
-        : [],
-  );
-}
-
-/** One line on the area pull: how many local concerts are stored, or why none are. */
-function areaNote({ area }: ProfileOutcome): string | null {
-  const { last, complete } = area;
-  if (!last) return null;
-  const pulled = complete ?? last;
-  const day = formatDate(pulled.updated_at.slice(0, 10));
-  const parts: string[] = [];
-  if (pulled.concerts > 0) {
-    parts.push(`${pulled.concerts.toLocaleString("en-US")} upcoming concerts near you on record (pulled ${day}).`);
+/** One line on what the vault holds for a band, and how its latest check went. */
+function HistoryStatus({ ledger, check, now }: { ledger: PerformerLedger | null; check: BackfillRow | null; now: Date }) {
+  if (check?.state === "queued") {
+    return <div className="meta history">Concert history check queued. It starts once any check ahead of it is done.</div>;
   }
-  if ((last.outcome === "partial" || last.outcome === "running") && last.next_page > 1) {
-    parts.push(
-      `The pull of local concerts is part done (page ${last.next_page - 1}${last.total_pages ? ` of ${last.total_pages}` : ""}) and carries on later.`,
-    );
-  } else if (last.outcome === "filter-ignored") {
-    parts.push("JamBase didn't narrow its concert search to your area, so local shows come only from bands' own lists for now.");
-  } else if (last.outcome === "error") {
-    parts.push("The last pull of local concerts failed; it will try again in a week.");
-  }
-  return parts.join(" ") || null;
-}
-
-/** Amber (hue 35) for a weak match up to green (hue 140) for a strong one. */
-const matchHue = (match: number) => Math.round(35 + ((match - 1) / 99) * 105);
-
-function Candidate({ c, today, listen }: { c: ProfileCandidate; today: string; listen: string }) {
-  const match = matchScore(c.score);
-  const hue = { "--match-hue": matchHue(match) } as CSSProperties;
-  const band = { name: c.artist.name, mbid: c.artist.mbid, jambaseId: c.artist.jambase_id, caSlug: c.artist.ca_slug };
-  const name = (
-    <a href={listen} target="_blank" rel="noopener noreferrer" title={`Listen to ${c.artist.name} on Spotify`}>
-      {c.artist.name}
-    </a>
-  );
-  // Explain through other acts when that's most of why the band is here.
-  const showBridges = c.bridges.length > 0 && (c.direct.length === 0 || c.bridged > c.score / 2);
-  return (
-    <li className="card match-card" style={hue}>
-      <div className="card-head">
-        <div className="card-title">{name}</div>
-        <span className="match" title={`Match ${match} of 100`} aria-label={`Match ${match} of 100`}>
-          {match}
-        </span>
+  if (check?.state === "running") {
+    return (
+      <div className="meta history">
+        Checking concert history: {check.progress ?? "starting"}… ({check.credits} credits so far)
       </div>
-      {c.direct.slice(0, MAX_LINKS_LISTED).map((d) => (
-        <div key={d.seed.id} className="why">
-          {describeDirect(d, today)}
-        </div>
-      ))}
-      {c.direct.length > MAX_LINKS_LISTED && (
-        <div className="why meta">and with {c.direct.length - MAX_LINKS_LISTED} more of your bands</div>
-      )}
-      {showBridges &&
-        c.bridges.slice(0, MAX_BRIDGES_LISTED).map((b) => (
-          <div key={`${b.seed.id}-${b.bridge.id}`} className="why">
-            {describeBridge(b)}
-          </div>
-        ))}
-      {showBridges && c.bridges.length > MAX_BRIDGES_LISTED && (
-        <p className="meta">and {c.bridges.length - MAX_BRIDGES_LISTED} more links like these</p>
-      )}
-      {c.nearby.length > 0 && (
-        <div className="nearby">
-          <div className="nearby-title">Playing near you</div>
-          <ul>
-            {c.nearby.slice(0, MAX_NEARBY_LISTED).map((s) => (
-              <NearbyLine key={s.date} show={s} />
-            ))}
-            {c.nearby.length > MAX_NEARBY_LISTED && (
-              <li className="meta">and {c.nearby.length - MAX_NEARBY_LISTED} more nearby</li>
-            )}
-          </ul>
-        </div>
-      )}
-      <PrefButtons band={band} current={null} />
-    </li>
-  );
-}
-
-/** Previous / next links. */
-function Pager({ page, index }: { page: GraphPage; index: number }) {
-  const pages = Math.ceil(page.total / PAGE_SIZE);
-  if (pages <= 1) return null;
-  const href = (i: number) => (i > 0 ? `/bands?page=${i + 1}` : "/bands");
+    );
+  }
+  const stored = ledger
+    ? `${ledger.concerts} shows stored, ${formatDate(ledger.oldest_date)} to ${formatDate(ledger.newest_date)}` +
+      (historyComplete(ledger, now) ? "" : `, not yet back ${HISTORY_YEARS} years`) +
+      `. Last checked ${formatDate(ledger.last_fetched_at)}.`
+    : "Concert history not checked yet.";
   return (
-    <p className="pager meta">
-      {index > 0 ? <Link href={href(index - 1)}>← Previous</Link> : <span />}
-      <span>
-        Page {index + 1} of {pages} ({page.total} acts)
-      </span>
-      {index < pages - 1 ? <Link href={href(index + 1)}>Next →</Link> : <span />}
-    </p>
+    <>
+      <div className="meta history">{stored}</div>
+      {check?.state === "failed" && <div className="meta history problem">Last check didn&apos;t finish: {check.message}</div>}
+      {check?.state === "done" && check.finished_at && (
+        <div className="meta history">
+          Latest check {formatDate(check.finished_at)} used {check.credits} credits. {check.message}
+        </div>
+      )}
+    </>
   );
 }
 
-export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
+function checkLabel(ledger: PerformerLedger | null, now: Date): string {
+  if (!ledger) return "Check concert history";
+  return historyComplete(ledger, now) ? "Check for new shows" : "Continue history check";
+}
+
+export default async function YourBands({ searchParams }: PageProps<"/bands">) {
   await connection(); // reads the database on every request, never at build time
   const params = await searchParams;
-  const index = pageParam(params.page);
-  const outcome = await recommendForProfile(getDb(), new Date(), { page: index, size: PAGE_SIZE });
-  if (outcome.liked === 0) redirect("/");
-  // Every upcoming concert around home, monthly, once the page is on its way.
-  after(() => refreshAreaIfDue(getDb()));
-  const { results, today, noKey, budget } = outcome;
-  const spotify = await spotifyLinks(getDb(), results.candidates.map((c) => c.artist.name));
-  const notes = refreshNotes(outcome);
-  const names = outcome.liked === 1 ? "the band you like" : `the ${outcome.liked} bands you like`;
+  const tab = one(params.list) === "hidden" ? "hidden" : "liked";
+  const q = one(params.q);
+  const confirming = one(params.check);
+  const pageNo = Math.max(1, Math.floor(Number(one(params.page)) || 1));
+  const base: Record<string, string> = {
+    ...(tab === "hidden" ? { list: "hidden" } : {}),
+    ...(q ? { q } : {}),
+    ...(pageNo > 1 ? { page: String(pageNo) } : {}),
+  };
+  const here = href(base, {});
+
+  const db = getDb();
+  const now = new Date();
+  const status = tab === "liked" ? "liked" : "not_interested";
+  const likedCount = countPrefs(db, "liked");
+  const hiddenCount = countPrefs(db, "not_interested");
+  const matching = countPrefs(db, status, q);
+  const prefs = listPrefs(db, status, { limit: PAGE_SIZE, offset: (pageNo - 1) * PAGE_SIZE, search: q });
+  const lastPage = Math.max(1, Math.ceil(matching / PAGE_SIZE));
+
+  const parseBot = parseBotConfig();
+  const canCheck = parseBot !== null;
+  const cap = maxCreditsPerCheck();
+  const pending = pendingChecks(db);
+  // Checks queued before a restart carry on once the page is open again.
+  if (pending > 0 && canCheck) after(() => runQueuedChecks(getDb(), clientFromEnv()));
+
+  const removeForm = (p: BandPref, label: string) => (
+    <form action={setBandPref}>
+      <input type="hidden" name="name" value={p.name} />
+      {p.mbid && <input type="hidden" name="mbid" value={p.mbid} />}
+      <button type="submit" name="status" value="cleared" className="small-button">
+        {label}
+      </button>
+    </form>
+  );
+
+  const likedRow = (p: BandPref) => {
+    const ledger = ledgerFor(db, p.ca_slug);
+    const check = getCheck(db, p.key);
+    const busy = check?.state === "queued" || check?.state === "running";
+    const candidates = candidatesOf(check);
+    return (
+      <li key={p.key} className="card band-row">
+        <div className="card-head">
+          <div>
+            <div className="card-title">{p.name}</div>
+            <HistoryStatus ledger={ledger} check={check} now={now} />
+          </div>
+          <div className="row-actions">
+            {canCheck && !busy && candidates.length === 0 && (
+              <Link className="small-button" href={href(base, { check: p.key })} scroll={false}>
+                {checkLabel(ledger, now)}
+              </Link>
+            )}
+            {removeForm(p, "Remove from likes")}
+          </div>
+        </div>
+
+        {confirming === p.key && !busy && (
+          <div className="confirm" role="alertdialog" aria-labelledby={`confirm-${p.key}`}>
+            <p id={`confirm-${p.key}`}>
+              <strong>Warning:</strong> this will use limited and fairly expensive API credits. Are you sure you want
+              to check the concert history for <strong>{p.name}</strong>?
+            </p>
+            <p className="meta">
+              It looks back {HISTORY_YEARS} years and stops at {cap} credits (2 credits per page of about 50 shows
+              {p.ca_slug ? "" : ", plus 2 to find the band on Concert Archives"}).
+              {ledger ? ` Last checked ${formatDate(ledger.last_fetched_at)}.` : ""}
+            </p>
+            <div className="confirm-actions">
+              <form action={startHistoryCheck}>
+                <input type="hidden" name="key" value={p.key} />
+                <input type="hidden" name="back" value={here} />
+                <button type="submit" className="danger-button">
+                  Yes, use credits
+                </button>
+              </form>
+              <Link href={here} scroll={false} className="small-button">
+                Cancel
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {candidates.length > 0 && (
+          <div className="confirm">
+            <p>{check?.message}</p>
+            <ul className="candidates">
+              {candidates.map((c) => (
+                <li key={c.slug}>
+                  <form action={pickHistoryPerformer}>
+                    <input type="hidden" name="key" value={p.key} />
+                    <input type="hidden" name="slug" value={c.slug} />
+                    <input type="hidden" name="back" value={here} />
+                    <button type="submit" className="small-button">
+                      Check this one
+                    </button>
+                  </form>
+                  <a href={`https://www.concertarchives.org/bands/${c.slug}`}>{c.name}</a>
+                  <span className="meta"> · {c.concert_count} concerts</span>
+                </li>
+              ))}
+            </ul>
+            <p className="meta">Picking one goes ahead with the check you confirmed, up to {cap} credits.</p>
+          </div>
+        )}
+      </li>
+    );
+  };
 
   return (
     <>
-      <h1>Bands like {names}</h1>
+      {pending > 0 && <AutoRefresh />}
+      <h1>Your bands</h1>
       <p className="lede">
-        <Link href="/">Add or remove bands</Link>
+        {likedCount === 0
+          ? "You haven't liked any bands yet."
+          : `You like ${likedCount} ${likedCount === 1 ? "band" : "bands"}. `}
+        {likedCount > 0 && <Link href="/suggestions">See bands like them →</Link>}
       </p>
 
-      {noKey && (
+      <nav className="tabs" aria-label="Lists">
+        <Link href={href({}, {})} aria-current={tab === "liked" ? "page" : undefined}>
+          Liked ({likedCount})
+        </Link>
+        <Link href={href({}, { list: "hidden" })} aria-current={tab === "hidden" ? "page" : undefined}>
+          Not interested ({hiddenCount})
+        </Link>
+        <Link href="/">Add bands</Link>
+      </nav>
+
+      {tab === "liked" && !canCheck && likedCount > 0 && (
         <p className="notice">
-          This server has no JamBase key, so only shows already stored are used. Set{" "}
-          <code>JAMBASE_API_KEY</code> in <code>.env.local</code> and restart to fetch upcoming
-          shows.
+          To check a band&apos;s concert history on Concert Archives, add <code>PARSE_API_KEY</code> and{" "}
+          <code>PARSE_SCRAPER_ID</code> to <code>.env.local</code> and restart the app.
         </p>
       )}
-      {spotify.problem && (
+
+      {tab === "liked" && parseBot && (
+        <p className="meta parse-config">Concert history checks use parse.bot {describeConfig(parseBot)}.</p>
+      )}
+
+      {(tab === "liked" ? likedCount : hiddenCount) > PAGE_SIZE / 4 && (
+        <form className="search" action="/bands" method="get">
+          {tab === "hidden" && <input type="hidden" name="list" value="hidden" />}
+          <input name="q" defaultValue={q} placeholder="Find a band in this list" aria-label="Find a band" />
+          <button type="submit">Find</button>
+        </form>
+      )}
+
+      {q && matching === 0 && (
         <p className="notice">
-          Band names open a Spotify search instead of the band&apos;s page, because the Spotify
-          lookup didn&apos;t work: {spotify.problem}. Set <code>SPOTIFY_CLIENT_ID</code> and{" "}
-          <code>SPOTIFY_CLIENT_SECRET</code> in <code>.env.local</code> and restart, or run{" "}
-          <code>node --env-file=.env.local scripts/data.mts spotify &quot;Band name&quot;</code> to
-          see what Spotify says.
+          No bands in this list match <strong>{q}</strong>.
         </p>
       )}
-      {notes.length > 0 && (
-        <ul className="meta notes">
-          {notes.map((n) => (
-            <li key={n}>{n}</li>
-          ))}
-        </ul>
-      )}
 
-      {results.total === 0 && (
-        <>
-          <p className="notice">
-            Nothing to go on yet: no shared bills are on record for {names}. Bands announce tours
-            in batches, so check back later.
-          </p>
-          <p className="meta" style={{ marginTop: "1rem" }}>
-            <Link href="/">Try another band</Link>, maybe one they&apos;ve toured with before.
-          </p>
-        </>
-      )}
-
-      {results.total > 0 && (
-        <>
-          <ol className="list" start={index * PAGE_SIZE + 1}>
-            {results.candidates.map((c) => (
-              <Candidate key={c.artist.id} c={c} today={today} listen={spotify.links.get(c.artist.name) ?? spotifySearchUrl(c.artist.name)} />
+      <ul className="list">
+        {tab === "liked"
+          ? prefs.map(likedRow)
+          : prefs.map((p) => (
+              <li key={p.key} className="card band-row">
+                <div className="card-head">
+                  <div className="card-title">{p.name}</div>
+                  <div className="row-actions">{removeForm(p, "Show again")}</div>
+                </div>
+              </li>
             ))}
-          </ol>
-          <Pager page={results} index={index} />
-          <p className="meta" style={{ marginTop: "1.5rem" }}>
-            Ranked by how many of your bands they share bills with, directly or through the acts
-            your bands play with. The match number runs from 1 to 100: green means links to many
-            of your bands, amber a single distant link. Upcoming dates count a little more than past ones. Shows are listed only when they&apos;re
-            within reach of Detroit. From upcoming
-            concerts on JamBase plus any history stored locally. Festivals are left out. Band names open
-            on Spotify.
-          </p>
-        </>
+      </ul>
+
+      {lastPage > 1 && (
+        <nav className="pager" aria-label="Pages">
+          {pageNo > 1 ? <Link href={href(base, { page: String(pageNo - 1) })}>← Previous</Link> : <span />}
+          <span className="meta">
+            Page {pageNo} of {lastPage}
+          </span>
+          {pageNo < lastPage ? <Link href={href(base, { page: String(pageNo + 1) })}>Next →</Link> : <span />}
+        </nav>
       )}
-      <p className="meta" style={{ marginTop: "0.5rem" }}>
-        {outcome.waiting > 0 &&
-          `${outcome.waiting} of your bands are due a JamBase check; a few get one each visit. `}
-        JamBase calls this month: {budget.used} of {budget.limit}.
-      </p>
-      {areaNote(outcome) && <p className="meta">{areaNote(outcome)}</p>}
     </>
   );
 }
