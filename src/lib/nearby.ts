@@ -72,22 +72,32 @@ export function nearbyShows(db: Db, artistId: number, today: string, home: Home)
   return shows;
 }
 
-export type LikedShow = NearbyShow & {
+export type ConcertShow = NearbyShow & {
   eventId: number;
   /** The liked bands on the bill, headliner first. */
   liked: string[];
-  /** Everyone on the bill, headliner first, liked bands included. */
+  /** Suggested bands on the bill, headliner first, with their suggestion score. */
+  suggested: { name: string; score: number }[];
+  /** Everyone on the bill, headliner first. */
   lineup: string[];
 };
 
 /**
- * Every upcoming show near home with at least one of these bands on the
- * bill, soonest first. A show several liked bands share is listed once. As
- * in nearbyShows, a band counts once per date, so a show stored by two
- * sources isn't listed twice.
+ * Every upcoming show near home with at least one liked band, or one of the
+ * `suggested` bands (artist id -> score), on the bill, soonest first. A show
+ * several of these bands share is listed once. As in nearbyShows, a band
+ * counts once per date, so a show stored by two sources isn't listed twice.
  */
-export function likedShows(db: Db, artistIds: number[], today: string, home: Home): LikedShow[] {
-  if (artistIds.length === 0) return [];
+export function concertsFor(
+  db: Db,
+  bands: { liked: number[]; suggested?: Map<number, number> },
+  today: string,
+  home: Home,
+): ConcertShow[] {
+  const liked = new Set(bands.liked);
+  const suggested = new Map([...(bands.suggested ?? [])].filter(([id]) => !liked.has(id)));
+  const ids = [...liked, ...suggested.keys()];
+  if (ids.length === 0) return [];
   const dLat = home.radiusMiles / 69;
   const rows = db
     .prepare(
@@ -97,7 +107,7 @@ export function likedShows(db: Db, artistIds: number[], today: string, home: Hom
          AND e.lat BETWEEN ? AND ? AND e.lon IS NOT NULL
        ORDER BY e.date, e.source = 'jambase' DESC, e.id`,
     )
-    .all(JSON.stringify([...new Set(artistIds)]), today, home.lat - dLat, home.lat + dLat) as {
+    .all(JSON.stringify(ids), today, home.lat - dLat, home.lat + dLat) as {
     id: number;
     date: string;
     venue: string | null;
@@ -134,7 +144,6 @@ export function likedShows(db: Db, artistIds: number[], today: string, home: Hom
     bills.get(b.event_id)!.push({ id: b.id, name: b.name });
   }
 
-  const mine = new Set(artistIds);
   return [...kept.values()].map((r) => {
     const bill = bills.get(r.id) ?? [];
     return {
@@ -144,7 +153,8 @@ export function likedShows(db: Db, artistIds: number[], today: string, home: Hom
       city: r.city ?? "",
       url: r.url,
       miles: r.miles,
-      liked: bill.filter((b) => mine.has(b.id)).map((b) => b.name),
+      liked: bill.filter((b) => liked.has(b.id)).map((b) => b.name),
+      suggested: bill.filter((b) => suggested.has(b.id)).map((b) => ({ name: b.name, score: suggested.get(b.id)! })),
       lineup: bill.map((b) => b.name),
     };
   });

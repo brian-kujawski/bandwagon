@@ -287,6 +287,16 @@ export function rebuildAffinity(
 
 const NOT_EXCLUDED = "artist_id NOT IN (SELECT artist_id FROM profile_artists WHERE role = 'excluded')";
 
+/** Every suggested artist's stored score, from the last `rebuildAffinity`. */
+export function suggestionScores(db: Db): Map<number, number> {
+  ensureAffinitySchema(db);
+  const rows = db.prepare(`SELECT artist_id, score FROM affinity WHERE score > 0 AND ${NOT_EXCLUDED}`).all() as {
+    artist_id: number;
+    score: number;
+  }[];
+  return new Map(rows.map((r) => [r.artist_id, r.score]));
+}
+
 /**
  * One page of the ranked list, from the scores `rebuildAffinity` stored, with
  * the links that explain each candidate. Only the page's candidates get their

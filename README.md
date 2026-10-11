@@ -30,7 +30,7 @@ Like the bands you love, as many as you want, and bandwagon recommends the artis
      node --env-file=.env.local scripts/data.mts area           # the full pull, or the rest of one
      ```
 
-8. **Your concerts.** **Concerts** (`/concerts`) lists every upcoming show within the radius with at least one liked band on the bill, soonest first and grouped by month, with the rest of the lineup and a link to the JamBase event page. A show several of your bands share is listed once. It reads only what's stored, so it spends no JamBase calls; your bands' dates come from the results page's checks and the monthly area pull.
+8. **Your concerts.** **Concerts** (`/concerts`) lists every upcoming show within the radius with at least one liked band on the bill, soonest first and grouped by month, with the rest of the lineup and a link to the JamBase event page. A show several of your bands share is listed once. It reads only what's stored, so it spends no JamBase calls; your bands' dates come from the results page's checks and the monthly area pull. **Include suggested** (`/concerts?suggested=1`) adds shows by every band on your Suggestions list as of your last visit there, badged with the same match number and linked to Spotify, for when you want to try someone new on a free night.
 
 Because everything lands in one database, Concert Archives history (from the vault, below) links up with JamBase shows by artist name, and every search makes the web a little bigger.
 
