@@ -161,7 +161,7 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
   // Every upcoming concert around home, monthly, once the page is on its way.
   after(() => refreshAreaIfDue(getDb()));
   const { results, today, noKey, budget } = outcome;
-  const listen = await spotifyLinks(getDb(), results.candidates.map((c) => c.artist.name));
+  const spotify = await spotifyLinks(getDb(), results.candidates.map((c) => c.artist.name));
   const notes = refreshNotes(outcome);
   const names = outcome.liked === 1 ? "the band you like" : `the ${outcome.liked} bands you like`;
 
@@ -177,6 +177,15 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
           This server has no JamBase key, so only shows already stored are used. Set{" "}
           <code>JAMBASE_API_KEY</code> in <code>.env.local</code> and restart to fetch upcoming
           shows.
+        </p>
+      )}
+      {spotify.problem && (
+        <p className="notice">
+          Band names open a Spotify search instead of the band&apos;s page, because the Spotify
+          lookup didn&apos;t work: {spotify.problem}. Set <code>SPOTIFY_CLIENT_ID</code> and{" "}
+          <code>SPOTIFY_CLIENT_SECRET</code> in <code>.env.local</code> and restart, or run{" "}
+          <code>node --env-file=.env.local scripts/data.mts spotify &quot;Band name&quot;</code> to
+          see what Spotify says.
         </p>
       )}
       {notes.length > 0 && (
@@ -203,7 +212,7 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
         <>
           <ol className="list" start={index * PAGE_SIZE + 1}>
             {results.candidates.map((c) => (
-              <Candidate key={c.artist.id} c={c} today={today} listen={listen.get(c.artist.name) ?? spotifySearchUrl(c.artist.name)} />
+              <Candidate key={c.artist.id} c={c} today={today} listen={spotify.links.get(c.artist.name) ?? spotifySearchUrl(c.artist.name)} />
             ))}
           </ol>
           <Pager page={results} index={index} />

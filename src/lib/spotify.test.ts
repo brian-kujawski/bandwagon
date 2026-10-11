@@ -14,9 +14,9 @@ describe("matchSpotifyArtist", () => {
     expect(matchSpotifyArtist([{ id: "1", name: "The Beths" }, { id: "2", name: "Beth" }], "Beths")?.id).toBe("1");
   });
 
-  it("refuses near misses and ambiguous names", () => {
+  it("takes the most relevant of several same-named artists, and refuses near misses", () => {
+    expect(matchSpotifyArtist([{ id: "x", name: "Lowly" }, { id: "1", name: "Low" }, { id: "2", name: "LOW" }], "Low")?.id).toBe("1");
     expect(matchSpotifyArtist([{ id: "1", name: "Pup Tent" }], "PUP")).toBeNull();
-    expect(matchSpotifyArtist([{ id: "1", name: "Low" }, { id: "2", name: "LOW" }], "Low")).toBeNull();
   });
 });
 
@@ -44,10 +44,11 @@ describe("spotifyLinks", () => {
       const url = String(input);
       if (url.startsWith("https://accounts.spotify.com")) return tokenOk();
       const q = new URL(url).searchParams.get("q");
-      return q === "PUP" ? search(["pup1", "PUP"], ["x", "Pup Tent"]) : search(["a", "Low"], ["b", "Low"]);
+      return q === "PUP" ? search(["x", "Pup Tent"], ["pup1", "PUP"]) : search(["a", "Lowly"]);
     });
 
-    const links = await spotifyLinks(db, ["PUP", "Low"]);
+    const { links, problem } = await spotifyLinks(db, ["PUP", "Low"]);
+    expect(problem).toBeNull();
     expect(links.get("PUP")).toBe("https://open.spotify.com/artist/pup1");
     expect(links.get("Low")).toBe("https://open.spotify.com/search/Low");
     expect(fetchMock).toHaveBeenCalledTimes(3); // one token, two searches
@@ -59,7 +60,7 @@ describe("spotifyLinks", () => {
 
     fetchMock.mockClear();
     const again = await spotifyLinks(db, ["PUP", "Low"]);
-    expect(again.get("PUP")).toBe("https://open.spotify.com/artist/pup1");
+    expect(again.links.get("PUP")).toBe("https://open.spotify.com/artist/pup1");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -79,14 +80,17 @@ describe("spotifyLinks", () => {
   it("uses search links without credentials or when Spotify fails, and stores nothing", async () => {
     const db = openDb(":memory:");
     vi.stubEnv("SPOTIFY_CLIENT_ID", "");
-    expect((await spotifyLinks(db, ["AC/DC"])).get("AC/DC")).toBe("https://open.spotify.com/search/AC%2FDC");
+    const none = await spotifyLinks(db, ["AC/DC"]);
+    expect(none.links.get("AC/DC")).toBe("https://open.spotify.com/search/AC%2FDC");
+    expect(none.problem).toMatch(/SPOTIFY_CLIENT_ID/);
     expect(fetchMock).not.toHaveBeenCalled();
 
     vi.stubEnv("SPOTIFY_CLIENT_ID", "id");
-    fetchMock.mockResolvedValue(json({ error: "invalid_client" }, 400));
-    const links = await spotifyLinks(db, ["A", "B", "C"]);
+    fetchMock.mockResolvedValue(json({ error: "invalid_client", error_description: "Invalid client" }, 400));
+    const { links, problem } = await spotifyLinks(db, ["A", "B", "C"]);
+    expect(problem).toBe("Spotify token request returned HTTP 400 (Invalid client)");
     expect([...links.values()].every((u) => u.includes("/search/"))).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1); // gave up after the first failure
-    expect(db.prepare("SELECT COUNT(*) AS n FROM spotify_links").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM spotify_matches").get()).toEqual({ n: 0 });
   });
 });
