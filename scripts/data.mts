@@ -22,6 +22,9 @@
  *       100 miles around Detroit) from JamBase, or carry on a pull left
  *       partway. --check spends one call to see whether JamBase applies the
  *       area filter and how many pages a full pull takes.
+ *   node --env-file=.env.local scripts/data.mts spotify <band name>
+ *       Search Spotify for a band and show which artist the results page
+ *       would link to, or Spotify's error. Uses SPOTIFY_CLIENT_ID/SECRET.
  *
  * `like` calls MusicBrainz (free) and `area` calls JamBase, within the
  * monthly budget. Nothing here spends parse.bot credits.
@@ -35,6 +38,7 @@ import { callsThisMonth, monthlyBudget } from "../src/lib/budget.ts";
 import { areaMonthlyCalls, pullArea } from "../src/lib/metro.ts";
 import { homeFromEnv } from "../src/lib/nearby.ts";
 import { likeMany, namesFromList } from "../src/lib/prefs.ts";
+import { describeError, matchSpotifyArtist, searchSpotifyArtists, spotifyArtistUrl, spotifySearchUrl } from "../src/lib/spotify.ts";
 import { importRawPages, performerLedger, rebuildConcertArchives } from "../src/lib/vault.ts";
 
 const [command, ...args] = process.argv.slice(2);
@@ -127,6 +131,18 @@ async function area() {
   console.log(`JamBase calls this month: ${callsThisMonth(db, "jambase")} of ${monthlyBudget("jambase")}`);
 }
 
+async function spotify() {
+  const name = args.join(" ").trim();
+  if (!name) throw new Error('usage: node --env-file=.env.local scripts/data.mts spotify "Band name"');
+  const results = await searchSpotifyArtists(name).catch((e) => {
+    throw new Error(describeError(e));
+  });
+  console.log(`Spotify's artist results for "${name}", most relevant first:`);
+  for (const a of results) console.log(`  ${a.name}  ${spotifyArtistUrl(a.id)}`);
+  const match = matchSpotifyArtist(results, name);
+  console.log(match ? `\nlinks to ${match.name}: ${spotifyArtistUrl(match.id)}` : `\nno exact name match; links to ${spotifySearchUrl(name)}`);
+}
+
 const commands: Record<string, () => void | Promise<void>> = {
   "import-raw": importRaw,
   rebuild,
@@ -135,11 +151,12 @@ const commands: Record<string, () => void | Promise<void>> = {
   import: importCmd,
   like,
   area,
+  spotify,
 };
 const run = commands[command ?? ""];
 if (!run) {
   console.error(
-    "usage: node scripts/data.mts import-raw [dir] | rebuild | status | export [file] | import <file> | like <file> [--first] | area [--check]",
+    "usage: node scripts/data.mts import-raw [dir] | rebuild | status | export [file] | import <file> | like <file> [--first] | area [--check] | spotify <band name>",
   );
   process.exit(1);
 }

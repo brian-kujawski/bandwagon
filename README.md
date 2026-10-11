@@ -16,7 +16,9 @@ Like the bands you love, as many as you want, and bandwagon recommends the artis
 
 5. **Near you.** Cards don't list every shared date, only the counts ("Opening for X on 8 upcoming dates"). When a suggested band has an upcoming show within 100 miles of downtown Detroit, the card lists it under "Playing near you" with a link to the JamBase event page. Distances use the venue coordinates JamBase gives. Change the area with `BANDWAGON_HOME` and `BANDWAGON_RADIUS_MILES`.
 
-6. **Everything playing near you.** Once a month the app also pulls every upcoming concert within that radius from JamBase, 100 to a call, after the results page has loaded. A suggested band's local date then shows up even if the app never looked that band up, and local bills (a touring act with its local openers) add links to the web. Festivals are still left out.
+6. **Listen on Spotify.** A suggested band's name opens its Spotify artist page in a new tab. The app searches Spotify by name with your app's client credentials (`SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`) and takes the first (most relevant) result with the band's exact name, ignoring case, accents and a leading "The". With no such result, or without credentials, the name opens a Spotify search for it, and the results page says why when the lookup itself failed. `node --env-file=.env.local scripts/data.mts spotify "Band name"` shows Spotify's results for one band and which one it picks. Answers are stored in the `spotify_matches` table, so each band is looked up once; bands with no match are tried again after a month.
+
+7. **Everything playing near you.** Once a month the app also pulls every upcoming concert within that radius from JamBase, 100 to a call, after the results page has loaded. A suggested band's local date then shows up even if the app never looked that band up, and local bills (a touring act with its local openers) add links to the web. Festivals are still left out.
    - The pull may use up to `BANDWAGON_AREA_MONTHLY_CALLS` calls a month (default 150), inside the overall JamBase budget. If either runs out partway it stops and carries on at the next page later; JamBase lists soonest dates first, so the coming weeks come in first. `BANDWAGON_AREA=off` turns it off.
    - JamBase's area filter isn't confirmed live yet, so each pull checks the venues on its first page. If they aren't within the radius it stops after that one call, stores nothing, says so on the results page, and tries again a week later.
    - To run it by hand, or to check the filter with one call first:
@@ -38,7 +40,7 @@ cp .env.example .env.local   # then add your JamBase key
 npm run dev                  # http://localhost:3000
 ```
 
-`JAMBASE_API_KEY` is read on the server only. Never commit it.
+`JAMBASE_API_KEY`, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` are read on the server only. Never commit them.
 
 The database lives at `data/bandwagon.db` (git-ignored); set `BANDWAGON_DB` to move it, or to `:memory:` to keep nothing. Without a JamBase key the app still runs on whatever is already stored.
 
@@ -64,6 +66,7 @@ npm run build
 - `src/lib/graph.ts`: direct and 2-hop scores for every artist, stored in `affinity` and read a page at a time, and the "why" text. Unit tested against an in-memory database.
 - `src/lib/recommend.ts`: refreshes a few liked bands per visit and the top neighbours (monthly, within the budget), then ranks.
 - `src/lib/metro.ts`: the monthly pull of every upcoming concert around home, with the first-page check that JamBase applied the area filter, resuming, and its own monthly call cap.
+- `src/lib/spotify.ts`: Spotify artist links for result cards (client credentials token, name search, first exact match or a search link), cached in `spotify_matches`.
 - `src/lib/cobills.ts`: JamBase event helpers (seed detection, billing relation, venue).
 - `src/lib/concertArchives.ts`: turns Concert Archives concert lists into co-bills (lineups from show titles, festival filter, de-duplication).
 - `src/lib/parsebot.ts`: the parse.bot client (key from the environment, pacing, one retry on its stalled 401s).
