@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { after, connection } from "next/server";
 import { PrefButtons } from "../pref-buttons";
 import { getDb } from "@/lib/db";
+import { spotifyLinks, spotifySearchUrl } from "@/lib/spotify";
 import type { CSSProperties } from "react";
 import {
   describeBridge,
@@ -81,11 +82,15 @@ function areaNote({ area }: ProfileOutcome): string | null {
 /** Amber (hue 35) for a weak match up to green (hue 140) for a strong one. */
 const matchHue = (match: number) => Math.round(35 + ((match - 1) / 99) * 105);
 
-function Candidate({ c, today }: { c: ProfileCandidate; today: string }) {
+function Candidate({ c, today, listen }: { c: ProfileCandidate; today: string; listen: string }) {
   const match = matchScore(c.score);
   const hue = { "--match-hue": matchHue(match) } as CSSProperties;
   const band = { name: c.artist.name, mbid: c.artist.mbid, jambaseId: c.artist.jambase_id, caSlug: c.artist.ca_slug };
-  const name = c.artist.url ? <a href={c.artist.url}>{c.artist.name}</a> : c.artist.name;
+  const name = (
+    <a href={listen} target="_blank" rel="noopener noreferrer" title={`Listen to ${c.artist.name} on Spotify`}>
+      {c.artist.name}
+    </a>
+  );
   // Explain through other acts when that's most of why the band is here.
   const showBridges = c.bridges.length > 0 && (c.direct.length === 0 || c.bridged > c.score / 2);
   return (
@@ -156,6 +161,7 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
   // Every upcoming concert around home, monthly, once the page is on its way.
   after(() => refreshAreaIfDue(getDb()));
   const { results, today, noKey, budget } = outcome;
+  const listen = await spotifyLinks(getDb(), results.candidates.map((c) => c.artist.name));
   const notes = refreshNotes(outcome);
   const names = outcome.liked === 1 ? "the band you like" : `the ${outcome.liked} bands you like`;
 
@@ -197,7 +203,7 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
         <>
           <ol className="list" start={index * PAGE_SIZE + 1}>
             {results.candidates.map((c) => (
-              <Candidate key={c.artist.id} c={c} today={today} />
+              <Candidate key={c.artist.id} c={c} today={today} listen={listen.get(c.artist.name) ?? spotifySearchUrl(c.artist.name)} />
             ))}
           </ol>
           <Pager page={results} index={index} />
@@ -206,7 +212,8 @@ export default async function BandsPage({ searchParams }: PageProps<"/bands">) {
             your bands play with. The match number runs from 1 to 100: green means links to many
             of your bands, amber a single distant link. Upcoming dates count a little more than past ones. Shows are listed only when they&apos;re
             within reach of Detroit. From upcoming
-            concerts on JamBase plus any history stored locally. Festivals are left out.
+            concerts on JamBase plus any history stored locally. Festivals are left out. Band names open
+            on Spotify.
           </p>
         </>
       )}
