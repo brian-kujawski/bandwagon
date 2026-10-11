@@ -70,7 +70,7 @@ describe("nearbyShows", () => {
     );
     const shows = nearbyShows(db, artistId, TODAY, DETROIT);
     expect(shows.map((s) => s.city)).toEqual(["Detroit", "Cleveland"]);
-    expect(shows[0]).toMatchObject({ date: "2026-11-01", venue: "Venue 2", url: "https://www.jambase.com/show/2" });
+    expect(shows[0]).toMatchObject({ date: "2026-11-01", time: "20:00", venue: "Venue 2", url: "https://www.jambase.com/show/2" });
     expect(shows[0].miles).toBeLessThan(1);
     expect(nearbyShows(db, artistId, TODAY, { ...DETROIT, radiusMiles: 50 }).map((s) => s.city)).toEqual(["Detroit"]);
   });
@@ -80,6 +80,13 @@ describe("nearbyShows", () => {
     const { artistId } = ingestJamBase(db, [e], { name: "Alpha" });
     ingestJamBase(db, [{ ...e, location: { ...e.location, geo: undefined } }], { name: "Alpha" });
     expect(nearbyShows(db, artistId, TODAY, DETROIT)).toHaveLength(1);
+  });
+
+  it("leaves the time empty when JamBase gives only a date", () => {
+    const { artistId } = ingestJamBase(db, [show("2026-11-01", "Detroit", DET, { startDate: "2026-11-01" })], {
+      name: "Alpha",
+    });
+    expect(nearbyShows(db, artistId, TODAY, DETROIT)[0]).toMatchObject({ date: "2026-11-01", time: null });
   });
 });
 
@@ -145,7 +152,7 @@ describe("openDb", () => {
   let dir: string;
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("adds coordinate columns to an older database", () => {
+  it("adds coordinate and start time columns to an older database", () => {
     dir = mkdtempSync(path.join(tmpdir(), "bandwagon-"));
     const file = path.join(dir, "old.db");
     const old = new DatabaseSync(file);
@@ -155,7 +162,7 @@ describe("openDb", () => {
     old.close();
     const db = openDb(file);
     const { artistId } = ingestJamBase(db, [show("2026-11-01", "Detroit", DET)], { name: "Alpha" });
-    expect(nearbyShows(db, artistId, TODAY, DETROIT)).toHaveLength(1);
+    expect(nearbyShows(db, artistId, TODAY, DETROIT)).toMatchObject([{ time: "20:00" }]);
     db.close();
   });
 });

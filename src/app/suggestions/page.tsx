@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { after, connection } from "next/server";
+import { AddToCalendar } from "../add-to-calendar";
 import { PrefButtons } from "../pref-buttons";
 import { getDb } from "@/lib/db";
 import { spotifyLinks, spotifySearchUrl } from "@/lib/spotify";
@@ -37,12 +38,23 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-function NearbyLine({ show }: { show: NearbyShow }) {
-  const text = `${formatDate(show.date)} · ${[show.venue, show.city].filter(Boolean).join(", ")}`;
+function NearbyLine({ band, show }: { band: string; show: NearbyShow }) {
+  const place = [show.venue, show.city].filter(Boolean).join(", ");
+  const text = `${formatDate(show.date)} · ${place}`;
+  const calendar = {
+    title: show.venue ? `${band} at ${show.venue}` : band,
+    date: show.date,
+    time: show.time,
+    location: place,
+    details: show.url ?? undefined,
+  };
   return (
-    <li>
-      {show.url ? <a href={show.url}>{text}</a> : text}
-      <span className="meta"> · {Math.max(1, Math.round(show.miles))} mi</span>
+    <li className="nearby-line">
+      <span>
+        {show.url ? <a href={show.url}>{text}</a> : text}
+        <span className="meta"> · {Math.max(1, Math.round(show.miles))} mi</span>
+      </span>
+      <AddToCalendar show={calendar} className="add-cal add-cal-small" />
     </li>
   );
 }
@@ -123,7 +135,7 @@ function Candidate({ c, today, listen }: { c: ProfileCandidate; today: string; l
           <div className="nearby-title">Playing near you</div>
           <ul>
             {c.nearby.slice(0, MAX_NEARBY_LISTED).map((s) => (
-              <NearbyLine key={s.date} show={s} />
+              <NearbyLine key={s.date} band={c.artist.name} show={s} />
             ))}
             {c.nearby.length > MAX_NEARBY_LISTED && (
               <li className="meta">and {c.nearby.length - MAX_NEARBY_LISTED} more nearby</li>
