@@ -4,7 +4,8 @@ import { affinityPage, rebuildAffinity, type GraphCandidate } from "./graph";
 import { ingestJamBase, type IngestCounts } from "./ingest";
 import { getEventsByJamBaseId, getUpcomingEvents, MissingJamBaseKeyError } from "./jambase";
 import { areaPullDue, lastAreaPull, lastCompleteAreaPull, pullArea, type AreaPull } from "./metro";
-import { homeFromEnv, nearbyShows, type NearbyShow } from "./nearby";
+import { getHome, type SavedHome } from "./home";
+import { nearbyShows, type NearbyShow } from "./nearby";
 import { artistIdsFor, listPrefs, type BandPref } from "./prefs";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -59,6 +60,8 @@ export type ProfileOutcome = {
   noKey: boolean;
   /** The latest pull of every upcoming concert around home, and the latest finished one. */
   area: { last: AreaPull | null; complete: AreaPull | null };
+  /** Where "near you" is. */
+  home: SavedHome;
 };
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
@@ -170,7 +173,7 @@ export async function recommendForProfile(
   rebuildAffinity(db, seedIds, exclude, today);
   const size = pages.size ?? 25;
   const page = affinityPage(db, { offset: (pages.page ?? 0) * size, limit: size });
-  const home = homeFromEnv();
+  const home = getHome(db);
   return {
     results: {
       total: page.total,
@@ -183,6 +186,7 @@ export async function recommendForProfile(
     budget: { used: callsThisMonth(db, "jambase", now), limit: monthlyBudget("jambase") },
     noKey,
     area: { last: lastAreaPull(db, home), complete: lastCompleteAreaPull(db, home) },
+    home,
   };
 }
 
@@ -195,7 +199,7 @@ let areaRun: Promise<void> | null = null;
  */
 export function refreshAreaIfDue(db: Db = getDb(), now: Date = new Date()): Promise<void> {
   if (process.env.BANDWAGON_AREA === "off" || !process.env.JAMBASE_API_KEY) return Promise.resolve();
-  const home = homeFromEnv();
+  const home = getHome(db);
   if (areaRun || !areaPullDue(db, home, now)) return areaRun ?? Promise.resolve();
   areaRun = pullArea(db, home, { log: (line) => console.info(`[area] ${line}`) })
     .then(({ pull, stoppedBy }) => {

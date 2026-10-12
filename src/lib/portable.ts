@@ -2,8 +2,8 @@
  * Move bandwagon's irreplaceable data between machines as one file.
  *
  * Only primary data travels: the vault of paid responses (vault.ts), your
- * liked and not-interested bands (prefs.ts), and the monthly API call counts
- * (budget.ts). Everything derived from them is rebuilt on import, so an
+ * liked and not-interested bands (prefs.ts), the monthly API call counts
+ * (budget.ts), and your saved home and radius (home.ts). Everything derived from them is rebuilt on import, so an
  * export stays small and an older export still imports after the derived
  * tables change.
  *
@@ -17,6 +17,7 @@ import { existsSync, renameSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { BUDGET_SCHEMA } from "./budget.ts";
 import { transaction, type Db } from "./db.ts";
+import { ensureHome, HOME_SCHEMA } from "./home.ts";
 import { ensurePrefs, PREFS_SCHEMA } from "./prefs.ts";
 import { ensureVault, rebuildConcertArchives, VAULT_SCHEMA } from "./vault.ts";
 
@@ -26,11 +27,13 @@ export const EXPORT_VERSION = 1;
 const PAYLOAD_COLUMNS = "source, endpoint, params, subject, fetched_at, credits, body, sha256";
 const PREF_COLUMNS = "key, name, mbid, jambase_id, ca_slug, status, updated_at";
 const CALL_COLUMNS = "source, month, machine, calls";
+const HOME_COLUMNS = "profile, label, lat, lon, radius_miles, updated_at";
 
 function ensureAll(db: Db): void {
   ensureVault(db);
   ensurePrefs(db);
   db.exec(BUDGET_SCHEMA);
+  ensureHome(db);
 }
 
 export type ExportCounts = { payloads: number; prefs: number };
@@ -44,6 +47,7 @@ export function exportData(db: Db, file: string, now: string = new Date().toISOS
   out.exec(VAULT_SCHEMA);
   out.exec(PREFS_SCHEMA);
   out.exec(BUDGET_SCHEMA);
+  out.exec(HOME_SCHEMA);
   out.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
   const meta = out.prepare("INSERT INTO meta (key, value) VALUES (?, ?)");
   meta.run("format", EXPORT_FORMAT);
@@ -57,6 +61,7 @@ export function exportData(db: Db, file: string, now: string = new Date().toISOS
       db.exec(`INSERT INTO export.payloads (${PAYLOAD_COLUMNS}) SELECT ${PAYLOAD_COLUMNS} FROM main.payloads ORDER BY id`);
       db.exec(`INSERT INTO export.band_prefs (${PREF_COLUMNS}) SELECT ${PREF_COLUMNS} FROM main.band_prefs`);
       db.exec(`INSERT INTO export.api_calls (${CALL_COLUMNS}) SELECT ${CALL_COLUMNS} FROM main.api_calls`);
+      db.exec(`INSERT INTO export.home_settings (${HOME_COLUMNS}) SELECT ${HOME_COLUMNS} FROM main.home_settings`);
     });
   } finally {
     db.exec("DETACH DATABASE export");
@@ -101,6 +106,21 @@ export function importData(db: Db, file: string): ImportCounts {
          SELECT ${CALL_COLUMNS} FROM incoming.api_calls WHERE true
          ON CONFLICT (source, month, machine) DO UPDATE SET calls = MAX(calls, excluded.calls)`,
       );
+      // Exports from before home was a setting have no home_settings table.
+      const hasHome = db
+        .prepare("SELECT 1 FROM incoming.sqlite_master WHERE type = 'table' AND name = 'home_settings'")
+        .get();
+      if (hasHome) {
+        // As with bands, the newer change of home wins.
+        db.exec(
+          `INSERT INTO main.home_settings (${HOME_COLUMNS})
+           SELECT ${HOME_COLUMNS} FROM incoming.home_settings WHERE true
+           ON CONFLICT (profile) DO UPDATE SET
+             label = excluded.label, lat = excluded.lat, lon = excluded.lon,
+             radius_miles = excluded.radius_miles, updated_at = excluded.updated_at
+           WHERE excluded.updated_at > home_settings.updated_at`,
+        );
+      }
       rebuildConcertArchives(db);
     });
   } finally {

@@ -2,9 +2,11 @@ import Link from "next/link";
 import { after, connection } from "next/server";
 import type { CSSProperties, ReactNode } from "react";
 import { AddToCalendar } from "../add-to-calendar";
+import { NearLine } from "../near-line";
 import { getArtistRow, getDb, transaction } from "@/lib/db";
 import { matchScore, suggestionScores } from "@/lib/graph";
-import { concertsFor, homeFromEnv, type ConcertShow } from "@/lib/nearby";
+import { getHome } from "@/lib/home";
+import { concertsFor, type ConcertShow } from "@/lib/nearby";
 import { artistIdsFor, listPrefs } from "@/lib/prefs";
 import { refreshAreaIfDue } from "@/lib/recommend";
 import { spotifyLinks, spotifySearchUrl } from "@/lib/spotify";
@@ -102,7 +104,7 @@ export default async function ConcertsPage({ searchParams }: PageProps<"/concert
   const prefs = listPrefs(db, "liked");
   // Saving one band can merge two artist rows, so drop ids that merged away.
   const ids = transaction(db, () => artistIdsFor(db, prefs)).filter((id) => getArtistRow(db, id));
-  const home = homeFromEnv();
+  const home = getHome(db);
   // Scores are those the Suggestions page last worked out.
   const suggested = withSuggested ? suggestionScores(db) : undefined;
   const shows = concertsFor(db, { liked: ids, suggested }, isoDay(now), home);
@@ -121,8 +123,8 @@ export default async function ConcertsPage({ searchParams }: PageProps<"/concert
     <>
       <h1>Concerts</h1>
       <p className="lede">
-        Upcoming shows by bands you like{withSuggested && " and bands suggested for you"}, within{" "}
-        {home.radiusMiles} miles of home, soonest first.
+        Upcoming shows by bands you like{withSuggested && " and bands suggested for you"}, soonest
+        first. <NearLine home={home} />
       </p>
       <p className="toggle-row">
         <Link

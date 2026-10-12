@@ -19,6 +19,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link href="/bands">Your bands</Link>
             <Link href="/suggestions">Suggestions</Link>
             <Link href="/concerts">Concerts</Link>
+            <Link href="/settings">Settings</Link>
           </nav>
         </header>
         <main>{children}</main>
