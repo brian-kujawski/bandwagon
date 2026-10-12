@@ -1,8 +1,9 @@
 /**
  * Upcoming shows within reach of home. Home defaults to downtown Detroit with
  * a 100-mile straight-line radius (decided 2026-10-09), which takes in
- * Cleveland, Lansing, Toledo, Ann Arbor, Flint and Windsor. Override with
- * BANDWAGON_HOME="lat,lon" and BANDWAGON_RADIUS_MILES.
+ * Cleveland, Lansing, Toledo, Ann Arbor, Flint and Windsor. The Settings
+ * page changes it (home.ts); BANDWAGON_HOME="lat,lon" and
+ * BANDWAGON_RADIUS_MILES set the default before anything is saved there.
  */
 import type { Db } from "./db.ts";
 

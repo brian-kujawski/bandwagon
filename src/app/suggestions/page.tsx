@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { after, connection } from "next/server";
 import { AddToCalendar } from "../add-to-calendar";
+import { NearLine } from "../near-line";
 import { PrefButtons } from "../pref-buttons";
 import { getDb } from "@/lib/db";
 import { spotifyLinks, spotifySearchUrl } from "@/lib/spotify";
@@ -181,7 +182,7 @@ export default async function SuggestionsPage({ searchParams }: PageProps<"/sugg
     <>
       <h1>Bands like {names}</h1>
       <p className="lede">
-        <Link href="/">Add or remove bands</Link>
+        <Link href="/">Add or remove bands</Link> · <NearLine home={outcome.home} />
       </p>
 
       {noKey && (
@@ -232,7 +233,7 @@ export default async function SuggestionsPage({ searchParams }: PageProps<"/sugg
             Ranked by how many of your bands they share bills with, directly or through the acts
             your bands play with. The match number runs from 1 to 100: green means links to many
             of your bands, amber a single distant link. Upcoming dates count a little more than past ones. Shows are listed only when they&apos;re
-            within reach of Detroit. From upcoming
+            within {Math.round(outcome.home.radiusMiles)} miles of {outcome.home.label}. From upcoming
             concerts on JamBase plus any history stored locally. Festivals are left out. Band names open
             on Spotify.
           </p>

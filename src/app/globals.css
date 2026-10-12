@@ -492,3 +492,79 @@ a.card:hover {
 .toggle[aria-checked="true"] .switch::after {
   transform: translateX(0.9rem);
 }
+
+.radius-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.radius-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  border: 0;
+}
+
+.radius-picker legend {
+  float: left;
+  margin-right: 0.25rem;
+  font-weight: 600;
+}
+
+.radius-picker label {
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.search select {
+  font: inherit;
+  padding: 0.65rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--card);
+  color: var(--fg);
+}
+
+.locate {
+  margin: -1.25rem 0 1.5rem;
+}
+
+.place-results {
+  margin-bottom: 1rem;
+}
+
+.place-results .meta {
+  flex-basis: 100%;
+  margin-left: 3.9rem;
+}
+
+.near-line {
+  white-space: nowrap;
+}
+
+.cost-dialog {
+  margin: auto;
+  max-width: min(30rem, calc(100vw - 2rem));
+  padding: 1.25rem 1.25rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.75rem;
+  background: var(--card);
+  color: var(--fg);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.cost-dialog:not([open]) {
+  display: none;
+}
+
+.cost-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.cost-dialog h2 {
+  font-size: 1.1rem;
+}

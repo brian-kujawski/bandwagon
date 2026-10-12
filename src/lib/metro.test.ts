@@ -2,7 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { callsThisMonth, recordCalls } from "./budget";
 import { openDb, type Db } from "./db";
 import type { AreaQuery, JbEvent } from "./jambase";
-import { areaPullDue, checkArea, lastAreaPull, pullArea, type FetchAreaPage } from "./metro";
+import {
+  areaCallsLeft,
+  areaPullDue,
+  checkArea,
+  circleCovers,
+  estimatePull,
+  lastAreaPull,
+  pullArea,
+  type FetchAreaPage,
+} from "./metro";
 import { DETROIT, nearbyShows } from "./nearby";
 
 const NOW = new Date("2026-10-10T12:00:00Z");
@@ -115,5 +124,46 @@ describe("pullArea", () => {
     await expect(pullArea(db, DETROIT, { now: NOW, fetchPage })).rejects.toThrow();
     expect(lastAreaPull(db, DETROIT)?.outcome).toBe("partial");
     expect(callsThisMonth(db, "jambase", NOW)).toBe(0);
+  });
+});
+
+describe("coverage", () => {
+  const ANN_ARBOR = { lat: 42.2808, lon: -83.743, radiusMiles: 50 };
+  const CHICAGO = { lat: 41.8781, lon: -87.6298, radiusMiles: 100 };
+
+  it("treats a circle inside a recent complete pull as already pulled", async () => {
+    const { fetchPage } = fake([[concert(DET)], [concert(DET)], [concert(CLE)], [concert(DET)]]);
+    await pullArea(db, DETROIT, { now: NOW, fetchPage });
+    expect(circleCovers(DETROIT, ANN_ARBOR)).toBe(true);
+    expect(areaPullDue(db, ANN_ARBOR, NOW)).toBe(false);
+    expect(areaPullDue(db, { ...DETROIT, radiusMiles: 25 }, NOW)).toBe(false);
+    expect(estimatePull(db, ANN_ARBOR, NOW).kind).toBe("covered");
+    expect(areaPullDue(db, CHICAGO, NOW)).toBe(true);
+  });
+
+  it("estimates a new area from the last full pull, scaled by radius squared", async () => {
+    const { fetchPage } = fake([[concert(DET)], [concert(DET)], [concert(CLE)], [concert(DET)]]);
+    await pullArea(db, DETROIT, { now: NOW, fetchPage });
+    expect(estimatePull(db, CHICAGO, NOW)).toMatchObject({ kind: "new", calls: 4 });
+    expect(estimatePull(db, { ...CHICAGO, radiusMiles: 50 }, NOW)).toMatchObject({ kind: "new", calls: 1 });
+  });
+
+  it("knows a move back to an older pull costs only its monthly refresh", async () => {
+    const { fetchPage } = fake([[concert(DET)], [concert(DET)]]);
+    await pullArea(db, DETROIT, { now: NOW, fetchPage });
+    const later = new Date("2026-12-01T12:00:00Z");
+    expect(estimatePull(db, DETROIT, later)).toMatchObject({ kind: "pulled-before", calls: 2 });
+    expect(areaPullDue(db, DETROIT, later)).toBe(true);
+  });
+
+  it("can't estimate before any pull has finished", () => {
+    expect(estimatePull(db, CHICAGO, NOW)).toEqual({ kind: "new", calls: null, basis: null });
+  });
+
+  it("counts calls left under the area cap", async () => {
+    expect(areaCallsLeft(db, NOW)).toBe(150);
+    const { fetchPage } = fake([[concert(DET)], [concert(DET)]]);
+    await pullArea(db, DETROIT, { now: NOW, fetchPage });
+    expect(areaCallsLeft(db, NOW)).toBe(148);
   });
 });

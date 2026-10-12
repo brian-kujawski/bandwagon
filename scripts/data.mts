@@ -18,8 +18,8 @@
  *       Looks each up on MusicBrainz, 1 per second; names shared by several
  *       artists are listed for you to pick in the app, unless --first.
  *   node --env-file=.env.local scripts/data.mts area [--check]
- *       Pull every upcoming concert around home (BANDWAGON_HOME, default
- *       100 miles around Detroit) from JamBase, or carry on a pull left
+ *       Pull every upcoming concert around home (set on the Settings page;
+ *       before that BANDWAGON_HOME, default 100 miles around Detroit) from JamBase, or carry on a pull left
  *       partway. --check spends one call to see whether JamBase applies the
  *       area filter and how many pages a full pull takes.
  *   node --env-file=.env.local scripts/data.mts spotify <band name>
@@ -36,7 +36,7 @@ import { searchArtists } from "../src/lib/musicbrainz.ts";
 import { exportData, importData } from "../src/lib/portable.ts";
 import { callsThisMonth, monthlyBudget } from "../src/lib/budget.ts";
 import { areaMonthlyCalls, pullArea } from "../src/lib/metro.ts";
-import { homeFromEnv } from "../src/lib/nearby.ts";
+import { getHome } from "../src/lib/home.ts";
 import { likeMany, namesFromList } from "../src/lib/prefs.ts";
 import { describeError, matchSpotifyArtist, searchSpotifyArtists, spotifyArtistUrl, spotifySearchUrl } from "../src/lib/spotify.ts";
 import { importRawPages, performerLedger, rebuildConcertArchives } from "../src/lib/vault.ts";
@@ -109,9 +109,9 @@ async function like() {
 }
 
 async function area() {
-  const home = homeFromEnv();
+  const home = getHome(db);
   const check = args.includes("--check");
-  console.log(`concerts within ${home.radiusMiles} miles of ${home.lat},${home.lon}`);
+  console.log(`concerts within ${home.radiusMiles} miles of ${home.label} (${home.lat},${home.lon})`);
   const r = await pullArea(db, home, { maxPages: check ? 1 : undefined, log: (line) => console.log(line) });
   if (r.check) {
     const c = r.check;

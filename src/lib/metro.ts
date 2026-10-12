@@ -92,7 +92,38 @@ export function lastCompleteAreaPull(db: Db, home: Home): AreaPull | null {
   );
 }
 
-function areaCallsThisMonth(db: Db, now: Date): number {
+/** The circle an area key stands for. */
+export function parseAreaKey(key: string): Home | null {
+  const [lat, lon, radiusMiles] = key.split(",").map(Number);
+  return [lat, lon, radiusMiles].every(Number.isFinite) ? { lat, lon, radiusMiles } : null;
+}
+
+/** Whether circle `outer` takes in all of circle `inner`, give or take a mile of rounding. */
+export function circleCovers(outer: Home, inner: Home): boolean {
+  return milesBetween(outer.lat, outer.lon, inner.lat, inner.lon) + inner.radiusMiles <= outer.radiusMiles + 1;
+}
+
+/**
+ * The latest complete pull whose circle takes in all of home's, from any
+ * area. With `freshAt`, only one still good for a month at that time. A home
+ * inside such a circle needs no pull of its own: its shows are already
+ * stored, and nearby.ts filters them to the smaller circle.
+ */
+export function coveringPull(db: Db, home: Home, freshAt?: Date): AreaPull | null {
+  db.exec(AREA_SCHEMA);
+  const rows = db
+    .prepare("SELECT * FROM area_pulls WHERE outcome = 'complete' ORDER BY started_at DESC, id DESC")
+    .all() as AreaPull[];
+  for (const r of rows) {
+    if (freshAt && freshAt.getTime() - Date.parse(r.started_at) >= FRESH_MS) continue;
+    const circle = parseAreaKey(r.area);
+    if (circle && circleCovers(circle, home)) return r;
+  }
+  return null;
+}
+
+export function areaCallsThisMonth(db: Db, now: Date = new Date()): number {
+  db.exec(AREA_SCHEMA);
   const month = now.toISOString().slice(0, 7);
   const row = db
     .prepare("SELECT COALESCE(SUM(calls), 0) AS n FROM area_pulls WHERE substr(updated_at, 1, 7) = ?")
@@ -100,8 +131,46 @@ function areaCallsThisMonth(db: Db, now: Date): number {
   return row.n;
 }
 
+/** Area calls left this month, under both the area cap and the overall budget. */
+export function areaCallsLeft(db: Db, now: Date = new Date()): number {
+  return Math.max(0, Math.min(areaMonthlyCalls() - areaCallsThisMonth(db, now), remainingCalls(db, "jambase", now)));
+}
+
+export type PullEstimate =
+  /** Inside a pull from the last month: nothing to fetch. */
+  | { kind: "covered"; by: AreaPull }
+  /** Inside an older pull: its shows are stored, and it gets the usual monthly refresh. */
+  | { kind: "pulled-before"; by: AreaPull; calls: number }
+  /**
+   * Never pulled. `calls` scales the latest complete pull by area (radius
+   * squared); null when there has been no complete pull to go by.
+   */
+  | { kind: "new"; calls: number | null; basis: AreaPull | null };
+
+/** What switching home to this circle would cost in JamBase calls. */
+export function estimatePull(db: Db, home: Home, now: Date = new Date()): PullEstimate {
+  const fresh = coveringPull(db, home, now);
+  if (fresh) return { kind: "covered", by: fresh };
+  const scaled = (basis: AreaPull) => {
+    const circle = parseAreaKey(basis.area);
+    const pages = basis.total_pages ?? basis.calls;
+    if (!circle || circle.radiusMiles <= 0 || pages <= 0) return null;
+    return Math.max(1, Math.ceil(pages * (home.radiusMiles / circle.radiusMiles) ** 2));
+  };
+  const old = coveringPull(db, home);
+  if (old) return { kind: "pulled-before", by: old, calls: scaled(old) ?? old.calls };
+  db.exec(AREA_SCHEMA);
+  const basis =
+    (db
+      .prepare("SELECT * FROM area_pulls WHERE outcome = 'complete' ORDER BY started_at DESC, id DESC LIMIT 1")
+      .get() as AreaPull | undefined) ?? null;
+  return { kind: "new", calls: basis ? scaled(basis) : null, basis };
+}
+
 /** Whether a pull should run now: none yet, a month since the last, or one left partway. */
 export function areaPullDue(db: Db, home: Home, now: Date = new Date()): boolean {
+  // A smaller circle inside a recent pull, or a move back to one, costs nothing.
+  if (coveringPull(db, home, now)) return false;
   const last = lastAreaPull(db, home);
   if (!last) return true;
   const age = now.getTime() - Date.parse(last.updated_at);
